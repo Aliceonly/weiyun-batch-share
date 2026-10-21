@@ -658,7 +658,7 @@
         attributeNames: node.getAttributeNames().filter((value) => safeAttributes.has(value))
       });
       return {
-        adapterVersion: "0.1.1",
+        adapterVersion: "0.1.2",
         path: location.pathname,
         folderId: context?.folderId,
         expectedCount: context?.expectedCount,
@@ -732,8 +732,8 @@
           task = await this.port.commit({ type: "scan_done", ...snapshot });
         }
         const recoveryFirst = [...task.items].sort((left, right) => {
-          const inFlight = (status) => ["link_observed", "securing", "verifying"].includes(status) ? 0 : 1;
-          return inFlight(left.status) - inFlight(right.status) || left.ordinal - right.ordinal;
+          const priority = (item) => item.manualReview ? 0 : ["link_observed", "securing", "verifying"].includes(item.status) ? 1 : 2;
+          return priority(left) - priority(right) || left.ordinal - right.ordinal;
         });
         for (const original of recoveryFirst) {
           task = await this.port.get();
@@ -805,6 +805,25 @@
       }
     }
     async processItem(item) {
+      if (item.manualReview) {
+        const reviewed = this.adapter.readShare(item);
+        this.validate(reviewed, item, true);
+        if (reviewed.url !== item.manualReview.url) {
+          throw new FlowError("\u6838\u5BF9\u540E\u5206\u4EAB\u94FE\u63A5\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u6838\u5BF9\u5F53\u524D\u5F39\u7A97\u3002", "URL_CHANGED", true, [item.manualReview.url, reviewed.url]);
+        }
+        if (reviewed.password !== item.manualReview.password) {
+          throw new FlowError("\u6838\u5BF9\u540E\u5BC6\u7801\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u6838\u5BF9\u5F53\u524D\u5F39\u7A97\u3002", "PASSWORD_CHANGED", true, [reviewed.url]);
+        }
+        // Reopening would repeat the automatic check the user just reconciled.
+        return {
+          url: reviewed.url,
+          password: reviewed.password,
+          passwordEnabled: true,
+          expiry: reviewed.expiry,
+          verifiedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          verification: "manual_review"
+        };
+      }
       const fresh = item.status === "pending";
       if (fresh) await this.port.commit({ type: "phase", key: item.key, status: "opening_share" });
       if (!fresh && !item.observedUrl) {

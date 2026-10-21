@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "微云 · 逐项分享",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "读取当前微云目录，逐项分享并添加密码，保存进度，按序导出 TXT。",
   "minimum_chrome_version": "120",
   "permissions": ["activeTab", "scripting", "storage", "sidePanel", "downloads"],

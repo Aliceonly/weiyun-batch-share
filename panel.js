@@ -55,6 +55,7 @@ async function rpc(action, fields = {}) {
 var connection = null;
 var current = null;
 var busy = false;
+var reviewKey = null;
 function element(id) {
   const node = document.getElementById(id);
   if (!node) throw new Error(`Missing panel element: ${id}`);
@@ -156,10 +157,15 @@ function render() {
   const reviewItem = current?.items.find((item) => item.status === "needs_review" || item.status === "opening_share");
   const accountAck = current && connection && !current.context.account && current.context.documentNonce !== connection.context.documentNonce;
   const showReview = !active && (!!reviewItem || !!accountAck);
+  const nextReviewKey = showReview ? JSON.stringify([current.id, reviewItem?.key, reviewItem?.observedUrl, reviewItem?.error?.at, connection?.context.documentNonce]) : null;
+  if (nextReviewKey !== reviewKey) {
+    element("review-ack").checked = false;
+    reviewKey = nextReviewKey;
+  }
   element("review").hidden = !showReview;
   element("review-heading").textContent = reviewItem ? `\u5148\u6838\u5BF9\uFF1A${reviewItem.name}` : "\u786E\u8BA4\u539F\u8D26\u53F7\u540E\u6062\u590D";
   element("review-message").textContent = reviewItem ? reviewItem.error?.message ?? "\u4E0A\u6B21\u64CD\u4F5C\u53EF\u80FD\u5DF2\u7ECF\u751F\u6210\u94FE\u63A5\uFF0C\u8BF7\u6253\u5F00\u5BF9\u5E94\u9879\u76EE\u7684\u5206\u4EAB\u5F39\u7A97\u6838\u5BF9\u3002" : "\u9875\u9762\u91CD\u65B0\u6253\u5F00\u540E\u65E0\u6CD5\u81EA\u52A8\u8BC6\u522B\u539F\u8D26\u53F7\uFF0C\u8BF7\u786E\u8BA4\u5F53\u524D\u767B\u5F55\u8D26\u53F7\u4E0E\u539F\u4EFB\u52A1\u4E00\u81F4\u3002";
-  element("review-ack-label").textContent = reviewItem ? "\u6211\u5DF2\u786E\u8BA4\u5F53\u524D\u4E3A\u539F\u8D26\u53F7\uFF0C\u5E76\u5DF2\u5904\u7406\u8BE5\u9879\u53CA\u76F8\u5173\u94FE\u63A5\u3002" : "\u6211\u5DF2\u786E\u8BA4\u5F53\u524D\u767B\u5F55\u7684\u662F\u8BE5\u4EFB\u52A1\u539F\u6765\u7684\u5FAE\u4E91\u8D26\u53F7\u3002";
+  element("review-ack-label").textContent = reviewItem ? "\u6211\u5DF2\u786E\u8BA4\u5F53\u524D\u4E3A\u539F\u8D26\u53F7\uFF0C\u5F53\u524D\u9879\u76EE\u7684\u94FE\u63A5\u548C\u5BC6\u7801\u6B63\u786E\uFF0C\u5E76\u5DF2\u5904\u7406\u76F8\u5173\u94FE\u63A5\u3002" : "\u6211\u5DF2\u786E\u8BA4\u5F53\u524D\u767B\u5F55\u7684\u662F\u8BE5\u4EFB\u52A1\u539F\u6765\u7684\u5FAE\u4E91\u8D26\u53F7\u3002";
   const reconcile = element("reconcile");
   reconcile.textContent = reviewItem ? "\u91C7\u7528\u5F53\u524D\u5F39\u7A97\u94FE\u63A5\u5E76\u7EE7\u7EED" : "\u6838\u5BF9\u8D26\u53F7\u5E76\u6062\u590D";
   reconcile.disabled = busy || !element("review-ack").checked;

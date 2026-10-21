@@ -152,7 +152,14 @@ function applyEvent(original, runId, event) {
       task.items = naturalSort(event.items).map((item, index) => {
         const imported = task.importedCandidates.find((candidate) => candidate.name === item.name);
         return {
-          ...item,
+          // Scanning supplies identity only, never authorization for manual review.
+          key: item.key,
+          name: item.name,
+          kind: item.kind,
+          siteId: item.siteId,
+          fingerprint: item.fingerprint,
+          scrollHint: item.scrollHint,
+          pageHint: item.pageHint,
           ordinal: index + 1,
           status: imported?.needsReview ? "needs_review" : "pending",
           attempts: 0,
@@ -204,7 +211,8 @@ function applyEvent(original, runId, event) {
     case "item_done": {
       const item = requireItem(task, event.key);
       const result = event.result;
-      if (item.status !== "verifying" || !isShareUrl(result.url) || !isPassword(result.password) || result.passwordEnabled !== true || result.verification !== "reopened_dialog" || result.url !== item.observedUrl || result.password !== item.observedPassword || !Number.isFinite(Date.parse(result.verifiedAt))) {
+      const manuallyReviewed = result.verification === "manual_review" && item.manualReview?.url === result.url && item.manualReview?.password === result.password && Number.isFinite(Date.parse(item.manualReview?.acknowledgedAt));
+      if (item.status !== "verifying" || !isShareUrl(result.url) || !isPassword(result.password) || result.passwordEnabled !== true || !(result.verification === "reopened_dialog" || manuallyReviewed) || result.url !== item.observedUrl || result.password !== item.observedPassword || !Number.isFinite(Date.parse(result.verifiedAt))) {
         throw new FlowError("\u94FE\u63A5\u6216\u5BC6\u7801\u672A\u901A\u8FC7\u5B8C\u6210\u6821\u9A8C\u3002", "UNVERIFIED_RESULT", true);
       }
       const duplicate = task.items.find((entry) => entry.key !== item.key && entry.result?.url === result.url);
@@ -212,6 +220,7 @@ function applyEvent(original, runId, event) {
       item.result = result;
       item.status = "done";
       item.error = null;
+      delete item.manualReview;
       item.updatedAt = now;
       task.currentItemKey = null;
       break;
@@ -332,6 +341,7 @@ function exportTxt(task, date = /* @__PURE__ */ new Date()) {
         `\u94FE\u63A5\uFF1A${item.result.url}`,
         `\u5BC6\u7801\uFF1A${item.result.password}`,
         `\u6709\u6548\u671F\uFF1A${item.result.expiry ? oneLine(item.result.expiry) : "\u672A\u786E\u8BA4\uFF0C\u4EE5\u5FAE\u4E91\u5B9E\u9645\u8BBE\u7F6E\u4E3A\u51C6"}`,
+        `\u786E\u8BA4\u65B9\u5F0F\uFF1A${item.result.verification === "manual_review" ? "\u4EBA\u5DE5\u6838\u5BF9\u5F53\u524D\u5F39\u7A97" : "\u91CD\u5F00\u5F39\u7A97\u81EA\u52A8\u9A8C\u8BC1"}`,
         `\u9A8C\u8BC1\u65F6\u95F4\uFF1A${item.result.verifiedAt}`
       );
     } else {
@@ -705,17 +715,29 @@ async function panelCommand(raw) {
       if (!item) throw new FlowError("\u6CA1\u6709\u9700\u8981\u624B\u52A8\u6838\u5BF9\u7684\u9879\u76EE\u3002", "NO_REVIEW_ITEM");
       const observation = await page(tabId, "READ_REVIEW", { item });
       if (observation.name !== item.name || !isShareUrl(observation.url)) throw new FlowError("\u8BF7\u6253\u5F00\u5BF9\u5E94\u9879\u76EE\u7684\u5206\u4EAB\u5F39\u7A97\u3002", "WRONG_SHARE");
-      if (observation.passwordEnabled && !isPassword(observation.password)) throw new FlowError("\u5F53\u524D\u5BC6\u7801\u65E0\u6CD5\u9A8C\u8BC1\u3002", "INVALID_PASSWORD");
+      if (observation.passwordEnabled !== true || !isPassword(observation.password)) throw new FlowError("\u5F53\u524D\u5206\u4EAB\u5C1A\u672A\u663E\u793A\u6709\u6548\u5BC6\u7801\u3002\u8BF7\u5148\u5728\u5FAE\u4E91\u5F39\u7A97\u4E2D\u6DFB\u52A0\u5E76\u6838\u5BF9\u5BC6\u7801\uFF0C\u518D\u91C7\u7528\u5F53\u524D\u94FE\u63A5\u3002", "PASSWORD_UNCONFIRMED");
+      const duplicate = task.items.find((entry) => entry.key !== item.key && entry.result?.url === observation.url);
+      if (duplicate) throw new FlowError(`\u5206\u4EAB\u94FE\u63A5\u4E0E\u201C${duplicate.name}\u201D\u91CD\u590D\uFF0C\u8BF7\u6253\u5F00\u6B63\u786E\u9879\u76EE\u7684\u5206\u4EAB\u5F39\u7A97\u540E\u91CD\u65B0\u6838\u5BF9\u3002`, "DUPLICATE_URL");
+      const acknowledgedAt = (/* @__PURE__ */ new Date()).toISOString();
       reconciled = {
         ...reconciled,
         items: reconciled.items.map((entry) => entry.key !== item.key ? entry : {
           ...entry,
-          status: "link_observed",
+          status: "verifying",
           observedUrl: observation.url,
-          observedPassword: null,
+          observedPassword: observation.password,
+          // Bind manual approval to this exact protected share, not future dialogs.
+          manualReview: { url: observation.url, password: observation.password, acknowledgedAt },
+          relatedShares: [...new Set([
+            ...entry.relatedShares ?? [],
+            entry.observedUrl,
+            entry.candidate?.url,
+            ...entry.error?.relatedUrls ?? []
+          ].filter((url) => isShareUrl(url) && url !== observation.url))],
           result: null,
           candidate: null,
-          error: null
+          error: null,
+          updatedAt: acknowledgedAt
         })
       };
     }

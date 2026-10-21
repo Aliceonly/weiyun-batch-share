@@ -1,7 +1,20 @@
 # 测试与交付状态
 
-版本：0.1.1（测试版）
-测试时间：2026-10-21T09:12:02.803Z
+## 0.1.2 本次修复验证
+
+验证日期：2026-10-21。
+
+- 使用当前交付的 `background.js`、`content.js`、`panel.js` 建立 Node VM 测试，不修改被测脚本，不访问真实微云。
+- 修复前已复现：自动重开读不到密码，补充保护后人工采用，仍回到同一项 `needs_review`，错误为 `PASSWORD_NOT_PERSISTED`。
+- `node --test tests/reconcile.test.cjs`：28 项 regression tests 通过，包括人工采用后不再重开当前项、保存并关闭后继续下一项、先处理当前核对弹窗再恢复其他中断项、自动验证保持、导出区分确认方式、旧链接保留，以及账号、密码、URL、revision、扫描消息不能注入人工授权、存储失败/延迟和关闭失败保护。
+- `node --check background.js`、`node --check content.js`、`node --check panel.js` 通过；`git diff --check` 通过。
+- 人工采用只证明使用者已确认当前弹窗的链接与密码；记录为 `manual_review`，不伪装成 `reopened_dialog`。本次未验证真实网站为什么重开读不到密码，后续独立异常仍会暂停。
+- 当前目录不含完整 TypeScript 源码或旧版测试，因此本次未重新运行 TypeScript strict typecheck、原 28 项核心测试或浏览器 integration tests。
+- 更新后需同时重新加载扩展和刷新微云网页；不要卸载扩展或清除已保存进度。
+
+## 0.1.1 历史交付记录
+
+历史测试时间：2026-10-21T09:12:02.803Z。以下为原交付记录，不代表本次重新执行。
 
 ## 已通过
 
@@ -37,4 +50,4 @@
 覆盖原来加载的同一个插件目录，在 chrome://extensions 中重新加载后，还必须刷新微云 tab，再点击插件图标。不要卸载插件或清空本地进度。
 因 0/60 扫描失败而没有快照的任务可以继续重扫；已有分享的目录必须继续原进度或导入历史记录，不要盲目重新建立任务。
 
-当前工作目录不是 Git repository，未创建 commit。
+本次修改未创建 commit。
