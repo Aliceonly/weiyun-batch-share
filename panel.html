@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>微云 · 逐项分享</title>
+    <link rel="stylesheet" href="panel.css">
+    <script type="module" src="panel.js"></script>
+  </head>
+  <body>
+    <main>
+      <header class="masthead">
+        <div class="brand-line"><span class="brand-mark" aria-hidden="true">W</span><span>WEIYUN / BATCH SHARE</span><span class="version">0.1</span></div>
+        <h1>一份目录<br><em>逐项分享。</em></h1>
+        <p class="intro">每项一个链接，每项一个密码。<br>按序记录，随时继续。</p>
+      </header>
+
+      <section class="folder-card" aria-label="当前目录">
+        <div class="section-label"><span>当前目录</span><button type="button" id="connect" class="text-button">重新读取 ↗</button></div>
+        <h2 id="folder-name">等待连接微云</h2>
+        <p id="folder-meta">进入微云文件夹，点击浏览器工具栏中的插件图标。</p>
+        <div class="policy"><span>当前目录直接项目</span><span>保留已有密码</span></div>
+      </section>
+
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+      <section class="task-section" aria-label="任务进度">
+        <div class="section-label"><span>分享进度</span><span id="status" class="status-tag">就绪</span></div>
+        <div class="metrics">
+          <div><strong id="count-done">0</strong><span>已完成</span></div>
+          <div><strong id="count-total">—</strong><span>目录项目</span></div>
+          <div><strong id="count-issues">0</strong><span>待核对 / 失败</span></div>
+        </div>
+        <progress id="progress" max="100" value="0" aria-label="分享完成进度"></progress>
+        <p id="task-message" class="task-message">完整读取清单后，自动逐项添加密码并保存结果。</p>
+
+        <button id="start" type="button" class="primary" disabled><span>全部分享并导出 TXT</span><span aria-hidden="true">↗</span></button>
+        <div class="button-row" id="run-controls" hidden>
+          <button id="pause" type="button" class="secondary">暂停</button>
+          <button id="resume" type="button" class="secondary">继续任务</button>
+          <button id="retry" type="button" class="secondary">仅重试失败项</button>
+        </div>
+        <div class="button-row" id="export-controls" hidden>
+          <button id="export" type="button" class="secondary">导出 TXT</button>
+          <button id="backup" type="button" class="secondary">备份进度</button>
+        </div>
+        <p id="download-state" class="hint"></p>
+      </section>
+
+      <section id="review" class="review-card" hidden aria-label="核对后恢复">
+        <h2 id="review-heading">先核对此项</h2>
+        <p id="review-message"></p>
+        <ul id="review-links"></ul>
+        <p class="hint">在微云中打开对应项目的分享弹窗，处理已列出的相关链接后再继续。插件会重新验证密码。</p>
+        <label class="check-line"><input id="review-ack" type="checkbox"><span id="review-ack-label">我已确认当前为原账号，并已核对该项及相关链接。</span></label>
+        <button id="reconcile" class="secondary" type="button" disabled>采用当前弹窗链接并继续</button>
+      </section>
+
+      <section id="results-section" class="results-section" hidden>
+        <div class="section-label"><span>项目清单</span><span id="list-count"></span></div>
+        <ol id="item-list" class="item-list"></ol>
+      </section>
+
+      <details class="utilities">
+        <summary>历史进度与页面诊断</summary>
+        <label for="task-select" class="field-label">当前目录已保存的任务</label>
+        <select id="task-select"><option value="">暂无任务</option></select>
+        <div class="button-row">
+          <button id="import" type="button" class="secondary">导入进度 JSON</button>
+          <button id="diagnose" type="button" class="secondary">导出页面诊断</button>
+        </div>
+        <input type="file" id="import-file" accept=".json,application/json" hidden>
+        <p class="hint">导入记录会先与当前目录核对。旧版进度未记录中断阶段时，首个未完成项目需人工核对。</p>
+        <button id="new-task" type="button" class="text-button" hidden>为此目录重新建立分享任务</button>
+        <button id="delete" type="button" class="text-button danger" hidden>删除选中的本地进度</button>
+        <p class="hint">删除本地进度不会取消微云分享。请先导出需要保留的记录。</p>
+      </details>
+
+      <footer>
+        <button id="focus" class="text-button" type="button">返回目标微云 tab ↗</button>
+        <p>结果保存在本机 · 无需 AI API<br>运行时保持目标 tab 打开，避免同时手动操作。</p>
+      </footer>
+    </main>
+  </body>
+</html>
