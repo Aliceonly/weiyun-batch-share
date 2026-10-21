@@ -22,7 +22,7 @@ body::before {
   background-size: auto, 7px 7px;
 }
 main { max-width: 640px; margin: 0 auto; padding: 25px 22px 16px; }
-button, select { font: inherit; }
+button, select, input { font: inherit; }
 button { cursor: pointer; }
 button:focus-visible, select:focus-visible, summary:focus-visible, input:focus-visible { outline: 3px solid #57a9b5; outline-offset: 3px; }
 button:disabled { opacity: .43; cursor: not-allowed; }
@@ -60,14 +60,6 @@ progress::-webkit-progress-value { background: var(--teal); transition: width .2
 .secondary:hover:enabled { background: #fff; border-color: var(--teal); }
 .button-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
 .hint { color: var(--muted); line-height: 1.85; font-size: 10px; margin: 10px 0 0; overflow-wrap: anywhere; }
-.review-card { padding: 14px; border: 1px solid #e6cda9; background: #fff7eb; border-radius: 4px; margin: 0 0 22px; }
-.review-card h2 { color: var(--warning); font-size: 14px; margin-top: 0; }
-.review-card p { font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
-.review-card ul { padding-left: 16px; margin: 8px 0; }
-.review-card a { color: var(--blue); font-size: 11px; overflow-wrap: anywhere; }
-.review-card .secondary { width: 100%; margin-top: 12px; }
-.check-line { display: flex; gap: 8px; font-size: 11px; line-height: 1.8; margin-top: 12px; }
-.check-line input { accent-color: var(--teal); flex-shrink: 0; align-self: start; margin-top: 5px; }
 .results-section { border-top: 1px solid var(--line); padding: 17px 0; }
 .item-list { margin: 12px 0 0; padding: 0; list-style: none; max-height: 290px; overflow: auto; scrollbar-width: thin; }
 .item-list li { display: grid; grid-template-columns: 25px minmax(0, 1fr) auto; gap: 7px; align-items: center; padding: 10px 1px; border-bottom: 1px solid #dce4df9c; font-size: 11px; }

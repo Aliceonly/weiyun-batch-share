@@ -1,53 +1,51 @@
 # 测试与交付状态
 
-## 0.1.2 本次修复验证
-
-验证日期：2026-10-21。
-
-- 使用当前交付的 `background.js`、`content.js`、`panel.js` 建立 Node VM 测试，不修改被测脚本，不访问真实微云。
-- 修复前已复现：自动重开读不到密码，补充保护后人工采用，仍回到同一项 `needs_review`，错误为 `PASSWORD_NOT_PERSISTED`。
-- `node --test tests/reconcile.test.cjs`：28 项 regression tests 通过，包括人工采用后不再重开当前项、保存并关闭后继续下一项、先处理当前核对弹窗再恢复其他中断项、自动验证保持、导出区分确认方式、旧链接保留，以及账号、密码、URL、revision、扫描消息不能注入人工授权、存储失败/延迟和关闭失败保护。
-- `node --check background.js`、`node --check content.js`、`node --check panel.js` 通过；`git diff --check` 通过。
-- 人工采用只证明使用者已确认当前弹窗的链接与密码；记录为 `manual_review`，不伪装成 `reopened_dialog`。本次未验证真实网站为什么重开读不到密码，后续独立异常仍会暂停。
-- 当前目录不含完整 TypeScript 源码或旧版测试，因此本次未重新运行 TypeScript strict typecheck、原 28 项核心测试或浏览器 integration tests。
-- 更新后需同时重新加载扩展和刷新微云网页；不要卸载扩展或清除已保存进度。
-
-## 0.1.1 历史交付记录
-
-历史测试时间：2026-10-21T09:12:02.803Z。以下为原交付记录，不代表本次重新执行。
+版本：0.1.4（测试版）
+测试时间：2026-10-21T14:22:04.126Z
 
 ## 已通过
 
 - TypeScript strict typecheck。
-- 28 项核心 regression tests 全部通过。
-- 3 项基于真实 DOM 结构的 adapter regression tests 全部通过。
-- 已在真实登录微云页面只读确认 list-group-item / .tit 名称结构及 50 → 60 项 lazy loading；名称连续为 1–60、无重复。
-- MV3 extension 在隔离的 Chromium 系 profile 中运行，本次使用 Edge 155；测试网页的所有请求由本地 fixture 拦截，不向真实微云创建分享。
-- 60 项真实 content script + runtime messages + storage + download；初始 50 项 lazy loading；重载保留进度；320/420px 无横向溢出。
-- 重开产生新链接：补充保护、显示两个链接、停止后续项目、不误报成功。
-- 真实暂停、panel 重载、继续剩余项，已完成项目不重复创建。
-- 目录仅加载 50/60 项时停止且零分享；诊断移除动态 class、attribute name 及所有 attribute values。
-- 按真实微云采集的 list-group-item / .tit / menu-list 结构：初始 50 项、完整 60 项、无稳定 ID，逐项加密验证通过。
-- 真实 service worker、isolated content script、runtime messages、storage 和 downloads API 集成。
-- 独立 Spec / Standards code review 发现的恢复顺序、候选结果丢失、额外链接持久化、账号昵称误识别及诊断字段泄露问题已修复；关键行为有 regression tests。
-- 最终发布 manifest 不包含 host_permissions；临时 fixture 扩展为 headless 测试添加的权限没有进入发布目录。
+- 70 项核心、自动重试及极简 TXT / 独立日志 regression tests 全部通过。
+- 69 项编译产物上的恢复、重试、存储 ACK、并发、账号与下载保护 regression tests 全部通过。
+- 3 项基于已捕获 DOM 结构的 adapter regression tests 全部通过。
+- MV3 extension 在隔离的 Chromium 系 Edge profile 中运行；微云网页请求由本地 fixture 拦截，没有向真实微云创建分享或修改密码。
+- Browser fixture: full-60。
+- Browser fixture: url-retry。
+- Browser fixture: password-retry-twice。
+- Browser fixture: retry-exhausted-continue。
+- Browser fixture: password-uncertain-recode。
+- Browser fixture: pause-reload-resume。
+- Browser fixture: incomplete-diagnostics。
+- Browser fixture: captured-list-60。
+- Browser fixture: legacy-refresh。
+- Browser fixture: legacy-live-password-view。
+- Browser fixture: import-uncertain。
+- Browser fixture: unknown-account-refresh。
+- Browser fixture: wrong-item-stops。
+- 覆盖真实 service worker、isolated content script、runtime messages、storage 和 downloads API 集成。
+- 旧 needs_review 与无 URL 中断项可直接继续；链接或密码不确定时最多自动尝试 3 次，仍失败则记入日志并继续后项。
+- 已完成项不重做；未完成项重新分享后只采用本次成功结果，历史相关链接仅进入日志。没有人工核对或批准入口。
+- 同一弹窗确认 URL 与有效密码，不关闭重开来推断服务端密码状态；结果不代表独立服务端或接收端验证。
+- 完成后分别下载极简结果 TXT 与详细日志，自动重复请求不重复下载；手动导出仍可重试下载。
+- 账号/目录/项目变化、错误弹窗、验证码/限流、缺少存储 ACK 或 stale runner 仍阻止新增分享。
+- 最终发布 manifest 无 host_permissions，fixture 的临时测试权限没有进入发布包。
 
-## 尚未验证
+## 验证边界
 
-- 未在真实微云运行新插件的批量分享端到端验收；真实页面仅展开右键菜单检查结构，没有点击分享或修改密码。
-- script 派发事件、既有分享复用语义、服务端密码保存与网站限流，以及其他布局/账号下的 DOM 差异。
-- Chrome 中的手动安装、真实工具栏 action 点击与 Side Panel 展示链路仍需用户现场验证。
-- 不提供真实微云 60 项固定完成时间承诺；fixture 不代表服务端性能。
+- 尚未对真实微云执行本次版本的批量分享端到端验收，也没有执行真实 60 项分享。
+- 微云服务端的链接复用、密码保存、分享频率限制及不同布局/账号的兼容性需要现场验收。
+- Chrome 手动安装、真实工具栏点击与 Side Panel 展示链路仍需现场验证；fixture 不代表真实服务端性能。
+- 重新分享可能创建额外链接或改变原密码；旧链接不自动撤销，不能把日志中的历史链接当作当前有效结果。
 
-## 使用前
+## 更新并继续
 
-先在专用的 3–5 项测试目录中试用，确认链接及密码可以正常访问，再运行正式任务。
-当前 2026-10-18 目录已有历史分享，请先按 README 导入旧进度并核对第 32 项，不要直接全新重跑。
-本轮开发没有继续执行该真实目录的批量分享；旧进度文件仅复制到 outputs 供手动迁移，不包含在通用源码包。
+1. 先导出进度 JSON 备份；覆盖原来加载的同一个插件目录，保留 extension ID、browser profile 和 storage。
+2. 在 chrome://extensions 或 edge://extensions 中重新加载，确认版本为 0.1.4。
+3. 刷新原微云 tab，回到原账号、原目录，点击插件图标，再点击继续任务。无需核对旧分享链接或密码。
+4. 若网站不提供账号标识，刷新后可能只需一次确认仍为原账号，这不是逐项分享核对。
+5. 完成后查看极简结果 TXT；失败原因、历史 URL 与尝试记录看导出日志，必要时仅重试失败项。
+6. 正式目录使用前，建议先用 3–5 项专用测试目录确认结果可以访问。
 
-## 更新旧插件
-
-覆盖原来加载的同一个插件目录，在 chrome://extensions 中重新加载后，还必须刷新微云 tab，再点击插件图标。不要卸载插件或清空本地进度。
-因 0/60 扫描失败而没有快照的任务可以继续重扫；已有分享的目录必须继续原进度或导入历史记录，不要盲目重新建立任务。
-
-本次修改未创建 commit。
+历史 bugfix 文档保留用于版本追溯；以 README 与 BUGFIX-0.1.4.md 的当前行为为准。
+未修改交付目录的 .git，未创建 commit。通用发布包和源码包均不包含真实分享结果或进度中的凭据。

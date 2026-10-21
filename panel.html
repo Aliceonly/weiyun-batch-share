@@ -11,7 +11,7 @@
   <body>
     <main>
       <header class="masthead">
-        <div class="brand-line"><span class="brand-mark" aria-hidden="true">W</span><span>WEIYUN / BATCH SHARE</span><span class="version">0.1.2</span></div>
+        <div class="brand-line"><span class="brand-mark" aria-hidden="true">W</span><span>WEIYUN / BATCH SHARE</span><span class="version">0.1.4</span></div>
         <h1>一份目录<br><em>逐项分享。</em></h1>
         <p class="intro">每项一个链接，每项一个密码。<br>按序记录，随时继续。</p>
       </header>
@@ -20,7 +20,7 @@
         <div class="section-label"><span>当前目录</span><button type="button" id="connect" class="text-button">重新读取 ↗</button></div>
         <h2 id="folder-name">等待连接微云</h2>
         <p id="folder-meta">进入微云文件夹，点击浏览器工具栏中的插件图标。</p>
-        <div class="policy"><span>当前目录直接项目</span><span>保留已有密码</span></div>
+        <div class="policy"><span>当前目录直接项目</span><span>中断项自动重新分享</span></div>
       </section>
 
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
@@ -30,7 +30,7 @@
         <div class="metrics">
           <div><strong id="count-done">0</strong><span>已完成</span></div>
           <div><strong id="count-total">—</strong><span>目录项目</span></div>
-          <div><strong id="count-issues">0</strong><span>待核对 / 失败</span></div>
+          <div><strong id="count-issues">0</strong><span>待恢复 / 失败</span></div>
         </div>
         <progress id="progress" max="100" value="0" aria-label="分享完成进度"></progress>
         <p id="task-message" class="task-message">完整读取清单后，自动逐项添加密码并保存结果。</p>
@@ -43,18 +43,10 @@
         </div>
         <div class="button-row" id="export-controls" hidden>
           <button id="export" type="button" class="secondary">导出 TXT</button>
+          <button id="export-log" type="button" class="secondary">导出日志</button>
           <button id="backup" type="button" class="secondary">备份进度</button>
         </div>
         <p id="download-state" class="hint"></p>
-      </section>
-
-      <section id="review" class="review-card" hidden aria-label="核对后恢复">
-        <h2 id="review-heading">先核对此项</h2>
-        <p id="review-message"></p>
-        <ul id="review-links"></ul>
-        <p class="hint">在微云中打开对应项目的分享弹窗，确认当前链接和密码正确，并处理已列出的相关链接。采用后将记录为人工核对，不再关闭重开该项验证；未显示有效密码时不能继续。</p>
-        <label class="check-line"><input id="review-ack" type="checkbox"><span id="review-ack-label">我已确认当前为原账号，当前项目的链接和密码正确，并已处理相关链接。</span></label>
-        <button id="reconcile" class="secondary" type="button" disabled>采用当前弹窗链接并继续</button>
       </section>
 
       <section id="results-section" class="results-section" hidden>
@@ -71,7 +63,7 @@
           <button id="diagnose" type="button" class="secondary">导出页面诊断</button>
         </div>
         <input type="file" id="import-file" accept=".json,application/json" hidden>
-        <p class="hint">导入记录会先与当前目录核对。旧版进度未记录中断阶段时，首个未完成项目需人工核对。</p>
+        <p class="hint">导入记录先匹配目录，未验证记录会重新分享；旧链接仅保留在日志中，不会自动撤销。</p>
         <button id="new-task" type="button" class="text-button" hidden>为此目录重新建立分享任务</button>
         <button id="delete" type="button" class="text-button danger" hidden>删除选中的本地进度</button>
         <p class="hint">删除本地进度不会取消微云分享。请先导出需要保留的记录。</p>

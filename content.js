@@ -243,7 +243,7 @@
         }
       }
       if (allVisible("iframe").some((node) => /captcha|tcaptcha/i.test(node.getAttribute("src") ?? ""))) {
-        throw new FlowError("\u5FAE\u4E91\u8981\u6C42\u9A8C\u8BC1\uFF0C\u8BF7\u5728\u9875\u9762\u4E2D\u5B8C\u6210\u540E\u6838\u5BF9\u5E76\u7EE7\u7EED\u3002", "CAPTCHA", true);
+        throw new FlowError("\u5FAE\u4E91\u8981\u6C42\u9A8C\u8BC1\uFF0C\u8BF7\u5728\u9875\u9762\u4E2D\u5B8C\u6210\u540E\u7EE7\u7EED\u3002", "CAPTCHA", true);
       }
     }
     total() {
@@ -314,7 +314,7 @@
       }
       const keys = /* @__PURE__ */ new Set();
       for (const record of records) {
-        if (keys.has(record.item.key)) throw new FlowError("\u9875\u9762\u5305\u542B\u540C\u540D\u6216\u91CD\u590D\u9879\u76EE\uFF0C\u65E0\u6CD5\u53EF\u9760\u533A\u5206\uFF0C\u8BF7\u5148\u6838\u5BF9\u3002", "AMBIGUOUS_ITEMS");
+        if (keys.has(record.item.key)) throw new FlowError("\u9875\u9762\u5305\u542B\u540C\u540D\u6216\u91CD\u590D\u9879\u76EE\uFF0C\u65E0\u6CD5\u53EF\u9760\u533A\u5206\uFF0C\u8BF7\u68C0\u67E5\u76EE\u5F55\u3002", "AMBIGUOUS_ITEMS");
         keys.add(record.item.key);
       }
       return records;
@@ -418,7 +418,7 @@
       this.checkPage();
       if (this.bound?.expectedCount !== null && this.bound?.expectedCount !== void 0) {
         const actual = this.total();
-        if (actual !== this.bound.expectedCount) throw new FlowError("\u76EE\u5F55\u9879\u6570\u5DF2\u53D8\u5316\uFF0C\u8BF7\u5148\u6838\u5BF9\u539F\u4EFB\u52A1\u3002", "DIRECTORY_CHANGED");
+        if (actual !== this.bound.expectedCount) throw new FlowError("\u76EE\u5F55\u9879\u6570\u5DF2\u53D8\u5316\uFF0C\u8BF7\u5148\u6062\u590D\u539F\u76EE\u5F55\u3002", "DIRECTORY_CHANGED");
       }
       for (let count = 0; this.page !== item.pageHint && count < 100; count++) {
         if (!await this.changePage(this.page < item.pageHint ? "next" : "previous")) break;
@@ -427,7 +427,7 @@
         const row = this.readRows().find((entry) => entry.item.key === item.key);
         if (!row) return null;
         if (row.item.name !== item.name || row.item.fingerprint !== item.fingerprint) {
-          throw new FlowError(`\u201C${item.name}\u201D\u7684\u540D\u79F0\u6216\u5185\u5BB9\u7279\u5F81\u5DF2\u53D8\u5316\uFF0C\u8BF7\u6838\u5BF9\u3002`, "ITEM_CHANGED");
+          throw new FlowError(`\u201C${item.name}\u201D\u7684\u540D\u79F0\u6216\u5185\u5BB9\u7279\u5F81\u5DF2\u53D8\u5316\uFF0C\u8BF7\u68C0\u67E5\u76EE\u5F55\u3002`, "ITEM_CHANGED");
         }
         return row.node;
       };
@@ -509,7 +509,7 @@
           const anchor = modal.querySelector(".share-link a.link");
           if (!anchor?.getAttribute("href")) return null;
           return this.readShare(item);
-        }, 15e3, "\u5206\u4EAB\u5F39\u7A97\u6216\u94FE\u63A5\u672A\u53CA\u65F6\u51FA\u73B0\uFF0C\u53EF\u80FD\u5DF2\u7ECF\u751F\u6210\u94FE\u63A5\uFF0C\u8BF7\u5148\u6838\u5BF9\u3002", true);
+        }, 15e3, "\u5206\u4EAB\u5F39\u7A97\u6216\u94FE\u63A5\u672A\u53CA\u65F6\u51FA\u73B0\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\uFF1B\u672C\u6B21\u53EF\u80FD\u5DF2\u751F\u6210\u94FE\u63A5\u3002", true);
       } catch (error) {
         if (error instanceof FlowError && error.uncertain) throw error;
         throw new FlowError(error instanceof Error ? error.message : String(error), "OPEN_SHARE_UNCERTAIN", true);
@@ -518,7 +518,7 @@
     readShare(item) {
       this.guard();
       const modal = this.modal();
-      if (!modal) throw new FlowError("\u5206\u4EAB\u5F39\u7A97\u5DF2\u6D88\u5931\uFF0C\u9700\u8981\u6838\u5BF9\u3002", "DIALOG_MISSING", true);
+      if (!modal) throw new FlowError("\u5206\u4EAB\u5F39\u7A97\u5DF2\u6D88\u5931\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\u3002", "DIALOG_MISSING", true);
       const nameNode = modal.querySelector(".file-name");
       const name = (nameNode?.getAttribute("title") || text(nameNode)).trim();
       const anchor = modal.querySelector(".share-link a.link");
@@ -538,7 +538,7 @@
       const enabled = visible(wrapper) && !!enabledControl && isPassword(value);
       const linkPassword = text(anchor).match(/(?:密码|提取码)\s*[：:]\s*([A-Za-z0-9]{4,16})/)?.[1];
       if (enabled && linkPassword && linkPassword !== value) {
-        throw new FlowError("\u5F39\u7A97\u4E2D\u7684\u5BC6\u7801\u4FE1\u606F\u4E0D\u4E00\u81F4\uFF0C\u8BF7\u6838\u5BF9\u3002", "PASSWORD_MISMATCH", true, [url]);
+        throw new FlowError("\u5F39\u7A97\u4E2D\u7684\u5BC6\u7801\u4FE1\u606F\u4E0D\u4E00\u81F4\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\u3002", "PASSWORD_MISMATCH", true, [url]);
       }
       const expiryElement = modal.querySelector(".validity,.expire,.expire-time,.expiration,.share-expire,[class*='validity']");
       const expiry = text(expiryElement) || text(modal).match(/(?:有效期|到期时间)\s*[：:]?\s*([^，。\n]{1,45})/)?.[0] || null;
@@ -555,19 +555,32 @@
       return waitUntil(() => {
         this.checkPage();
         const current = this.readShare(item);
-        if (current.url !== before.url) throw new FlowError("\u52A0\u5BC6\u7801\u65F6\u94FE\u63A5\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u6682\u505C\u3002", "URL_CHANGED", true, [before.url, current.url]);
+        if (current.url !== before.url) throw new FlowError("\u52A0\u5BC6\u7801\u65F6\u94FE\u63A5\u53D1\u751F\u53D8\u5316\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\u3002", "URL_CHANGED", true, [before.url, current.url]);
         return current.passwordEnabled ? current : null;
-      }, 12e3, "\u6DFB\u52A0\u5BC6\u7801\u672A\u786E\u8BA4\u6210\u529F\uFF0C\u94FE\u63A5\u53EF\u80FD\u5C1A\u672A\u53D7\u4FDD\u62A4\uFF0C\u8BF7\u5148\u6838\u5BF9\u3002", true);
+      }, 12e3, "\u6DFB\u52A0\u5BC6\u7801\u672A\u786E\u8BA4\u6210\u529F\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\uFF1B\u672C\u6B21\u94FE\u63A5\u72B6\u6001\u8BB0\u5F55\u5230\u65E5\u5FD7\u3002", true);
     }
-    async closeShare() {
+    async closeShare(item) {
       this.guard();
       const modal = this.modal();
       if (!modal) return;
+      const nameNode = modal.querySelector(".file-name");
+      const name = (nameNode?.getAttribute("title") || text(nameNode)).trim();
+      if (item && name !== item.name) return;
       const buttons = allVisible(selectors.close, modal);
       const button = buttons[0] ?? exactControl(modal, ["\u5173\u95ED\u5F39\u7A97", "\u5173\u95ED"]);
       if (!button) throw new FlowError("\u65E0\u6CD5\u627E\u5230\u5206\u4EAB\u5F39\u7A97\u7684\u5173\u95ED\u6309\u94AE\u3002", "CLOSE_NOT_FOUND");
       button.click();
       await waitUntil(() => !this.modal(), 5e3, "\u5206\u4EAB\u5F39\u7A97\u672A\u5173\u95ED\u3002");
+    }
+    async confirmShare(item) {
+      await waitUntil(() => {
+        this.checkPage();
+        const current = this.readShare(item);
+        return current.passwordEnabled ? current : null;
+      }, 5e3, "\u5F53\u524D\u5F39\u7A97\u7684\u5BC6\u7801\u72B6\u6001\u5C1A\u672A\u786E\u8BA4\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\u3002", true);
+      await settle(180, 700);
+      this.checkPage();
+      return this.readShare(item);
     }
     diagnostics() {
       let context = null;
@@ -658,7 +671,7 @@
         attributeNames: node.getAttributeNames().filter((value) => safeAttributes.has(value))
       });
       return {
-        adapterVersion: "0.1.2",
+        adapterVersion: "0.1.4",
         path: location.pathname,
         folderId: context?.folderId,
         expectedCount: context?.expectedCount,
@@ -671,6 +684,20 @@
         })(),
         visibleMenuStructure: allVisible(selectors.menu).map(structure),
         shareDialogPresent: !!this.modal(),
+        shareDialogState: (() => {
+          const modal = this.modal();
+          if (!modal) return null;
+          const input = modal.querySelector(".pw input");
+          return {
+            namePresent: !!modal.querySelector(".file-name"),
+            linkPresent: !!modal.querySelector(".share-link a.link[href]"),
+            passwordInputPresent: !!input,
+            passwordFormatValid: isPassword(input?.value.trim() ?? ""),
+            passwordWrapperVisible: visible(modal.querySelector(".pw-wrapper")),
+            cancelPasswordControlPresent: !!exactControl(modal, ["\u53D6\u6D88\u63D0\u53D6\u7801", "\u53D6\u6D88\u8BBF\u95EE\u5BC6\u7801", "\u53D6\u6D88\u5BC6\u7801"]),
+            addPasswordControlPresent: !!exactControl(modal, ["\u6DFB\u52A0\u63D0\u53D6\u7801", "\u6DFB\u52A0\u8BBF\u95EE\u5BC6\u7801", "\u6DFB\u52A0\u5BC6\u7801"])
+          };
+        })(),
         rowStructure: rows.slice(0, 6).map((node) => ({
           ...structure(node),
           children: [...node.querySelectorAll("*")].slice(0, 12).map(structure)
@@ -704,6 +731,23 @@
   }
 
   // src/runner.ts
+  var MAX_ITEM_ATTEMPTS = 3;
+  function mustStop(error) {
+    return error.code.startsWith("AMBIGUOUS_") || [
+      "ACCOUNT_CHANGED",
+      "DIRECTORY_CHANGED",
+      "ITEM_CHANGED",
+      "ITEM_NOT_FOUND",
+      "WRONG_SHARE",
+      "MULTIPLE_DIALOGS",
+      "SITE_BLOCKED",
+      "CAPTCHA",
+      "WRONG_PAGE",
+      "RUNNER_BUSY",
+      "STALE_DOCUMENT",
+      "DUPLICATE_URL"
+    ].includes(error.code);
+  }
   var Runner = class {
     constructor(adapter, port) {
       this.adapter = adapter;
@@ -732,7 +776,7 @@
           task = await this.port.commit({ type: "scan_done", ...snapshot });
         }
         const recoveryFirst = [...task.items].sort((left, right) => {
-          const priority = (item) => item.manualReview ? 0 : ["link_observed", "securing", "verifying"].includes(item.status) ? 1 : 2;
+          const priority = (item) => item.restartRequired || ["opening_share", "link_observed", "securing", "verifying", "needs_review"].includes(item.status) ? 0 : 1;
           return priority(left) - priority(right) || left.ordinal - right.ordinal;
         });
         for (const original of recoveryFirst) {
@@ -742,33 +786,44 @@
             return;
           }
           if (!["running", "pausing"].includes(task.status)) return;
-          const item = task.items.find((entry) => entry.key === original.key);
+          let item = task.items.find((entry) => entry.key === original.key);
           if (["done", "failed"].includes(item.status)) continue;
-          if (item.status === "needs_review") return;
-          try {
-            assertContext(task.context, this.adapter.context());
-            this.adapter.checkPage();
-            const result = await this.processItem(item);
-            await this.port.commit({ type: "item_done", key: item.key, result });
-            try {
-              await this.adapter.closeShare();
-            } catch (error) {
-              await this.port.commit({ type: "paused", message: `\u7ED3\u679C\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u5F39\u7A97\u672A\u5173\u95ED\uFF1A${asFlowError(error).message}` });
+          for (let attempt = 1; attempt <= MAX_ITEM_ATTEMPTS; attempt++) {
+            task = await this.port.get();
+            item = task.items.find((entry) => entry.key === original.key);
+            if (task.pauseRequested) {
+              if (attempt > 1 && item.status === "failed") await this.port.commit({ type: "restart", key: item.key });
+              await this.port.commit({ type: "paused" });
               return;
             }
-          } catch (error) {
-            let flow = asFlowError(error, true);
-            if (!flow.uncertain && (item.observedUrl || ["link_observed", "securing", "verifying"].includes(item.status))) {
-              flow = new FlowError(
-                `\u4E0A\u6B21\u5206\u4EAB\u5C1A\u672A\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u4E0D\u80FD\u8DF3\u8FC7\u8BE5\u9879\uFF1A${flow.message}`,
-                flow.code,
-                true,
-                [item.observedUrl, ...flow.relatedUrls].filter((url) => !!url)
-              );
+            if (!["running", "pausing"].includes(task.status)) return;
+            try {
+              assertContext(task.context, this.adapter.context());
+              this.adapter.checkPage();
+              const restarting = !!item.restartRequired || item.status !== "pending" || !!item.observedUrl || !!item.candidate || !!item.manualReview;
+              if (restarting) {
+                task = await this.port.commit({ type: "restart", key: item.key });
+                if (task.pauseRequested) {
+                  await this.port.commit({ type: "paused" });
+                  return;
+                }
+                item = task.items.find((entry) => entry.key === item.key);
+              }
+              const result = await this.processItem(item, restarting);
+              await this.port.commit({ type: "item_done", key: item.key, result });
+              if (!await this.closeOrPause(item)) return;
+              break;
+            } catch (error) {
+              const flow = asFlowError(error, true);
+              if (["PERSISTENCE_FAILED", "STALE_RUN"].includes(flow.code) || mustStop(flow)) throw flow;
+              task = await this.port.commit({ type: "item_error", key: item.key, error: errorInfo(flow), uncertain: flow.uncertain });
+              if (task.pauseRequested) {
+                if (attempt < MAX_ITEM_ATTEMPTS) await this.port.commit({ type: "restart", key: item.key });
+                await this.port.commit({ type: "paused" });
+                return;
+              }
+              if (attempt === MAX_ITEM_ATTEMPTS && !await this.closeOrPause(item)) return;
             }
-            if (flow.code === "PERSISTENCE_FAILED" || flow.code === "STALE_RUN") throw flow;
-            task = await this.port.commit({ type: "item_error", key: item.key, error: errorInfo(flow), uncertain: flow.uncertain });
-            if (flow.uncertain || task.status === "needs_review") return;
           }
         }
         task = await this.port.get();
@@ -790,100 +845,66 @@
         this.busy = false;
       }
     }
+    async closeOrPause(item) {
+      try {
+        const task = await this.port.get();
+        assertContext(task.context, this.adapter.context());
+        await this.adapter.closeShare(item);
+        return true;
+      } catch (error) {
+        const flow = asFlowError(error);
+        if (["PERSISTENCE_FAILED", "STALE_RUN"].includes(flow.code) || mustStop(flow)) throw flow;
+        await this.port.commit({ type: "paused", message: `\u8FDB\u5EA6\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u5F39\u7A97\u672A\u5173\u95ED\uFF1A${flow.message}` });
+        return false;
+      }
+    }
     validate(observation, item, secured = false) {
       if (observation.name !== item.name || !isShareUrl(observation.url)) {
         throw new FlowError("\u5206\u4EAB\u5F39\u7A97\u4E0E\u76EE\u6807\u9879\u76EE\u4E0D\u4E00\u81F4\uFF0C\u5DF2\u505C\u6B62\u3002", "WRONG_SHARE", true, [observation.url].filter(isShareUrl));
       }
       if (secured && (!observation.passwordEnabled || !isPassword(observation.password))) {
-        throw new FlowError("\u8BBF\u95EE\u5BC6\u7801\u5C1A\u672A\u786E\u8BA4\u4FDD\u5B58\uFF0C\u9700\u8981\u5148\u6838\u5BF9\u5F53\u524D\u5206\u4EAB\u3002", "PASSWORD_UNCONFIRMED", true, [observation.url]);
+        throw new FlowError("\u5F53\u524D\u5F39\u7A97\u672A\u663E\u793A\u6709\u6548\u8BBF\u95EE\u5BC6\u7801\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\u5206\u4EAB\u3002", "PASSWORD_UNCONFIRMED", true, [observation.url]);
       }
     }
     async protectUnexpected(item, observation) {
       await this.port.commit({ type: "related_share", key: item.key, url: observation.url });
-      if (observation.name === item.name && !observation.passwordEnabled) {
-        await this.adapter.addPassword(item).catch(() => void 0);
+      if (observation.name === item.name && (!observation.passwordEnabled || !isPassword(observation.password))) {
+        await this.adapter.addPassword(item);
       }
     }
-    async processItem(item) {
-      if (item.manualReview) {
-        const reviewed = this.adapter.readShare(item);
-        this.validate(reviewed, item, true);
-        if (reviewed.url !== item.manualReview.url) {
-          throw new FlowError("\u6838\u5BF9\u540E\u5206\u4EAB\u94FE\u63A5\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u6838\u5BF9\u5F53\u524D\u5F39\u7A97\u3002", "URL_CHANGED", true, [item.manualReview.url, reviewed.url]);
-        }
-        if (reviewed.password !== item.manualReview.password) {
-          throw new FlowError("\u6838\u5BF9\u540E\u5BC6\u7801\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u6838\u5BF9\u5F53\u524D\u5F39\u7A97\u3002", "PASSWORD_CHANGED", true, [reviewed.url]);
-        }
-        // Reopening would repeat the automatic check the user just reconciled.
-        return {
-          url: reviewed.url,
-          password: reviewed.password,
-          passwordEnabled: true,
-          expiry: reviewed.expiry,
-          verifiedAt: (/* @__PURE__ */ new Date()).toISOString(),
-          verification: "manual_review"
-        };
-      }
-      const fresh = item.status === "pending";
-      if (fresh) await this.port.commit({ type: "phase", key: item.key, status: "opening_share" });
-      if (!fresh && !item.observedUrl) {
-        throw new FlowError("\u4E0A\u6B21\u53EF\u80FD\u5DF2\u521B\u5EFA\u94FE\u63A5\uFF0C\u4E0D\u80FD\u81EA\u52A8\u91CD\u5EFA\u3002\u8BF7\u5148\u6838\u5BF9\u3002", "UNKNOWN_PREVIOUS_SHARE", true);
-      }
+    async processItem(item, restarting) {
+      await this.port.commit({ type: "phase", key: item.key, status: "opening_share" });
+      if (restarting) await this.adapter.closeShare(item);
       let observed = await this.adapter.openShare(item);
       this.validate(observed, item);
-      const expectedUrl = item.observedUrl ?? item.candidate?.url;
-      if (expectedUrl && observed.url !== expectedUrl) {
+      const expectedUrl = observed.url;
+      await this.port.commit({ type: "phase", key: item.key, status: "link_observed", url: observed.url });
+      await this.port.commit({ type: "phase", key: item.key, status: "securing" });
+      if (!observed.passwordEnabled || !isPassword(observed.password)) observed = await this.adapter.addPassword(item);
+      this.validate(observed, item);
+      if (observed.url !== expectedUrl) {
         await this.protectUnexpected(item, observed);
-        throw new FlowError("\u5F53\u524D\u94FE\u63A5\u4E0E\u5DF2\u4FDD\u5B58\u94FE\u63A5\u4E0D\u540C\uFF0C\u5DF2\u6682\u505C\uFF0C\u907F\u514D\u91CD\u590D\u5206\u4EAB\u3002", "URL_CHANGED", true, [expectedUrl, observed.url]);
+        throw new FlowError("\u8BBE\u7F6E\u5BC6\u7801\u65F6\u94FE\u63A5\u53D1\u751F\u53D8\u5316\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\u3002", "URL_CHANGED", true, [expectedUrl, observed.url]);
       }
-      if (item.candidate?.password && observed.passwordEnabled && observed.password !== item.candidate.password) {
-        throw new FlowError("\u73B0\u6709\u5BC6\u7801\u4E0E\u5BFC\u5165\u8BB0\u5F55\u4E0D\u540C\uFF0C\u5DF2\u4FDD\u7559\u73B0\u6709\u8BBE\u7F6E\uFF0C\u8BF7\u6838\u5BF9\u3002", "IMPORTED_PASSWORD_CHANGED", true, [observed.url]);
-      }
-      if (fresh) {
-        await this.port.commit({ type: "phase", key: item.key, status: "link_observed", url: observed.url });
-        await this.port.commit({ type: "phase", key: item.key, status: "securing" });
-      } else if (item.status === "link_observed") {
-        await this.port.commit({ type: "phase", key: item.key, status: "securing" });
-      }
-      if (!observed.passwordEnabled) observed = await this.adapter.addPassword(item);
       this.validate(observed, item, true);
-      if (observed.url !== (expectedUrl ?? observed.url)) {
-        throw new FlowError("\u8BBE\u7F6E\u5BC6\u7801\u65F6\u94FE\u63A5\u53D1\u751F\u53D8\u5316\uFF0C\u8BF7\u6838\u5BF9\u3002", "URL_CHANGED", true, [expectedUrl, observed.url].filter(Boolean));
+      await this.port.commit({ type: "phase", key: item.key, status: "verifying", url: observed.url, password: observed.password });
+      const confirmed = await this.adapter.confirmShare(item);
+      this.validate(confirmed, item);
+      if (confirmed.url !== observed.url) {
+        await this.protectUnexpected(item, confirmed);
+        throw new FlowError("\u786E\u8BA4\u8FC7\u7A0B\u4E2D\u5206\u4EAB\u94FE\u63A5\u53D1\u751F\u53D8\u5316\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\u3002", "URL_CHANGED", true, [observed.url, confirmed.url]);
       }
-      if (!fresh) {
-        const current2 = (await this.port.get()).items.find((entry) => entry.key === item.key);
-        if (current2.status === "verifying") {
-          if (current2.observedPassword && current2.observedPassword !== observed.password) {
-            throw new FlowError("\u6062\u590D\u65F6\u53D1\u73B0\u5BC6\u7801\u53D8\u5316\uFF0C\u8BF7\u6838\u5BF9\u73B0\u6709\u5206\u4EAB\u3002", "PASSWORD_CHANGED", true, [observed.url]);
-          }
-        }
-      }
-      const current = (await this.port.get()).items.find((entry) => entry.key === item.key);
-      if (current.status !== "verifying") {
-        await this.port.commit({ type: "phase", key: item.key, status: "verifying", url: observed.url, password: observed.password });
-      }
-      await this.adapter.closeShare();
-      const reopened = await this.adapter.openShare(item);
-      this.validate(reopened, item);
-      if (reopened.url !== observed.url) {
-        await this.protectUnexpected(item, reopened);
-        throw new FlowError("\u91CD\u65B0\u6253\u5F00\u5206\u4EAB\u65F6\u751F\u6210\u4E86\u4E0D\u540C\u94FE\u63A5\uFF0C\u65E0\u6CD5\u786E\u8BA4\u590D\u7528\u884C\u4E3A\u3002\u5DF2\u6682\u505C\uFF0C\u8BF7\u6838\u5BF9\u4E24\u4E2A\u94FE\u63A5\u3002", "REOPEN_CREATED_NEW_SHARE", true, [observed.url, reopened.url]);
-      }
-      if (!reopened.passwordEnabled) {
-        await this.protectUnexpected(item, reopened);
-        throw new FlowError("\u91CD\u65B0\u6253\u5F00\u540E\u5BC6\u7801\u672A\u4FDD\u7559\uFF0C\u5DF2\u5C1D\u8BD5\u8865\u5145\u4FDD\u62A4\uFF0C\u8BF7\u6838\u5BF9\u3002", "PASSWORD_NOT_PERSISTED", true, [reopened.url]);
-      }
-      this.validate(reopened, item, true);
-      if (reopened.password !== observed.password) {
-        throw new FlowError("\u91CD\u65B0\u6253\u5F00\u540E\u5BC6\u7801\u4E0D\u540C\uFF0C\u9700\u8981\u6838\u5BF9\u3002", "PASSWORD_CHANGED", true, [reopened.url]);
+      this.validate(confirmed, item, true);
+      if (confirmed.password !== observed.password) {
+        throw new FlowError("\u786E\u8BA4\u8FC7\u7A0B\u4E2D\u5BC6\u7801\u53D1\u751F\u53D8\u5316\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\u3002", "PASSWORD_CHANGED", true, [confirmed.url]);
       }
       return {
-        url: reopened.url,
-        password: reopened.password,
+        url: confirmed.url,
+        password: confirmed.password,
         passwordEnabled: true,
-        expiry: reopened.expiry,
+        expiry: confirmed.expiry,
         verifiedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        verification: "reopened_dialog"
+        verification: "same_dialog"
       };
     }
   };
@@ -904,11 +925,6 @@
           });
         } else if (raw.action === "DIAGNOSE") {
           sendResponse({ ok: true, data: state.adapter.diagnostics() });
-        } else if (raw.action === "READ_REVIEW") {
-          if (state.runner?.isBusy) throw new FlowError("\u6267\u884C\u5668\u5C1A\u672A\u505C\u6B62\uFF0C\u8BF7\u7A0D\u540E\u6838\u5BF9\u3002", "RUNNER_BUSY");
-          const item = raw.item;
-          const observation = state.adapter.readShare(item);
-          sendResponse({ ok: true, data: observation });
         } else if (raw.action === "RUN") {
           if (state.runner?.isBusy) throw new FlowError("\u5F53\u524D\u9875\u9762\u5DF2\u6709\u4EFB\u52A1\u8FD0\u884C\u3002", "RUNNER_BUSY");
           const task = raw.task;
@@ -926,6 +942,7 @@
                 return await rpc("COMMIT", { ...fields, event });
               } catch (error) {
                 const flow = asFlowError(error, true);
+                if (flow.code === "DUPLICATE_URL") throw flow;
                 throw new FlowError(
                   `\u8FDB\u5EA6\u4FDD\u5B58\u672A\u786E\u8BA4\uFF0C\u5DF2\u505C\u6B62\u65B0\u589E\u64CD\u4F5C\uFF1A${flow.message}`,
                   flow.code === "STALE_RUN" ? "STALE_RUN" : "PERSISTENCE_FAILED",

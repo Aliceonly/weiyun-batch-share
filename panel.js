@@ -55,7 +55,7 @@ async function rpc(action, fields = {}) {
 var connection = null;
 var current = null;
 var busy = false;
-var reviewKey = null;
+var reconnectPending = false;
 function element(id) {
   const node = document.getElementById(id);
   if (!node) throw new Error(`Missing panel element: ${id}`);
@@ -67,7 +67,7 @@ var labels = {
   pausing: "\u51C6\u5907\u6682\u505C",
   paused: "\u5DF2\u6682\u505C",
   interrupted: "\u5DF2\u4E2D\u65AD",
-  needs_review: "\u9700\u8981\u6838\u5BF9",
+  needs_review: "\u5F85\u6062\u590D",
   completed: "\u5168\u90E8\u5B8C\u6210",
   finished_with_errors: "\u90E8\u5206\u5931\u8D25",
   error: "\u5DF2\u505C\u6B62"
@@ -80,7 +80,7 @@ var itemLabels = {
   verifying: "\u9A8C\u8BC1\u4FDD\u5B58",
   done: "\u5DF2\u5B8C\u6210",
   failed: "\u5931\u8D25",
-  needs_review: "\u9700\u6838\u5BF9"
+  needs_review: "\u5F85\u6062\u590D"
 };
 function notice(message, error = false) {
   const node = element("notice");
@@ -128,17 +128,17 @@ function render() {
   status.textContent = current ? labels[current.status] : "\u5C31\u7EEA";
   status.classList.toggle("issue", !!current && ["needs_review", "error", "interrupted", "finished_with_errors"].includes(current.status));
   element("progress").value = current?.items.length ? counts.done / current.items.length * 100 : 0;
-  element("task-message").textContent = current?.status === "completed" && current.exportStatus === "downloaded" ? "\u5168\u90E8\u5B8C\u6210\uFF0CTXT \u5DF2\u4E0B\u8F7D\u3002" : current?.message ?? "\u5B8C\u6574\u8BFB\u53D6\u6E05\u5355\u540E\uFF0C\u81EA\u52A8\u9010\u9879\u6DFB\u52A0\u5BC6\u7801\u5E76\u4FDD\u5B58\u7ED3\u679C\u3002";
+  element("task-message").textContent = current?.status === "needs_review" ? "\u539F\u4EFB\u52A1\u5DF2\u4FDD\u5B58\uFF0C\u70B9\u51FB\u201C\u7EE7\u7EED\u4EFB\u52A1\u201D\u540E\u81EA\u52A8\u91CD\u65B0\u5206\u4EAB\u672A\u5B8C\u6210\u9879\uFF0C\u4E0D\u518D\u9700\u8981\u4EBA\u5DE5\u6838\u5BF9\u3002" : current?.status === "completed" && current.exportStatus === "downloaded" && current.logExportStatus === "downloaded" ? "\u5168\u90E8\u5B8C\u6210\uFF0C\u7ED3\u679C TXT \u548C\u65E5\u5FD7\u5DF2\u4E0B\u8F7D\u3002" : current?.message ?? "\u5B8C\u6574\u8BFB\u53D6\u6E05\u5355\u540E\uFF0C\u81EA\u52A8\u9010\u9879\u6DFB\u52A0\u5BC6\u7801\u5E76\u4FDD\u5B58\u7ED3\u679C\u3002";
   const start2 = element("start");
   start2.hidden = !!current;
   start2.disabled = busy || !connection;
   element("run-controls").hidden = !current;
   element("pause").disabled = busy || !active || current?.status === "pausing";
-  const unresolved = current?.items.some((item) => ["needs_review", "opening_share"].includes(item.status));
-  element("resume").disabled = busy || !current || active || current.status === "completed" || !!unresolved;
-  element("retry").disabled = busy || !current || active || counts.failed === 0 || counts.review > 0;
+  element("resume").disabled = busy || !current || active || ["completed", "finished_with_errors"].includes(current.status);
+  element("retry").disabled = busy || !current || active || counts.failed === 0;
   element("export-controls").hidden = !current;
   element("export").disabled = busy || !current;
+  element("export-log").disabled = busy || !current;
   element("backup").disabled = busy || !current;
   element("connect").disabled = busy;
   element("import").disabled = busy || active;
@@ -153,34 +153,10 @@ function render() {
     downloaded: "TXT \u5DF2\u4E0B\u8F7D\u3002",
     failed: "\u4E0B\u8F7D\u672A\u5B8C\u6210\uFF0C\u7ED3\u679C\u5DF2\u4FDD\u5B58\uFF0C\u53EF\u91CD\u65B0\u5BFC\u51FA\u3002"
   };
-  element("download-state").textContent = current ? downloadLabels[current.exportStatus] : "";
-  const reviewItem = current?.items.find((item) => item.status === "needs_review" || item.status === "opening_share");
-  const accountAck = current && connection && !current.context.account && current.context.documentNonce !== connection.context.documentNonce;
-  const showReview = !active && (!!reviewItem || !!accountAck);
-  const nextReviewKey = showReview ? JSON.stringify([current.id, reviewItem?.key, reviewItem?.observedUrl, reviewItem?.error?.at, connection?.context.documentNonce]) : null;
-  if (nextReviewKey !== reviewKey) {
-    element("review-ack").checked = false;
-    reviewKey = nextReviewKey;
-  }
-  element("review").hidden = !showReview;
-  element("review-heading").textContent = reviewItem ? `\u5148\u6838\u5BF9\uFF1A${reviewItem.name}` : "\u786E\u8BA4\u539F\u8D26\u53F7\u540E\u6062\u590D";
-  element("review-message").textContent = reviewItem ? reviewItem.error?.message ?? "\u4E0A\u6B21\u64CD\u4F5C\u53EF\u80FD\u5DF2\u7ECF\u751F\u6210\u94FE\u63A5\uFF0C\u8BF7\u6253\u5F00\u5BF9\u5E94\u9879\u76EE\u7684\u5206\u4EAB\u5F39\u7A97\u6838\u5BF9\u3002" : "\u9875\u9762\u91CD\u65B0\u6253\u5F00\u540E\u65E0\u6CD5\u81EA\u52A8\u8BC6\u522B\u539F\u8D26\u53F7\uFF0C\u8BF7\u786E\u8BA4\u5F53\u524D\u767B\u5F55\u8D26\u53F7\u4E0E\u539F\u4EFB\u52A1\u4E00\u81F4\u3002";
-  element("review-ack-label").textContent = reviewItem ? "\u6211\u5DF2\u786E\u8BA4\u5F53\u524D\u4E3A\u539F\u8D26\u53F7\uFF0C\u5F53\u524D\u9879\u76EE\u7684\u94FE\u63A5\u548C\u5BC6\u7801\u6B63\u786E\uFF0C\u5E76\u5DF2\u5904\u7406\u76F8\u5173\u94FE\u63A5\u3002" : "\u6211\u5DF2\u786E\u8BA4\u5F53\u524D\u767B\u5F55\u7684\u662F\u8BE5\u4EFB\u52A1\u539F\u6765\u7684\u5FAE\u4E91\u8D26\u53F7\u3002";
-  const reconcile = element("reconcile");
-  reconcile.textContent = reviewItem ? "\u91C7\u7528\u5F53\u524D\u5F39\u7A97\u94FE\u63A5\u5E76\u7EE7\u7EED" : "\u6838\u5BF9\u8D26\u53F7\u5E76\u6062\u590D";
-  reconcile.disabled = busy || !element("review-ack").checked;
-  element("review-links").replaceChildren();
-  const links = new Set([reviewItem?.observedUrl, ...reviewItem?.relatedShares ?? [], ...reviewItem?.error?.relatedUrls ?? []].filter((url) => !!url));
-  for (const url of links) {
-    const item = document.createElement("li");
-    const link = document.createElement("a");
-    link.textContent = url;
-    link.href = url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    item.append(link);
-    element("review-links").append(item);
-  }
+  element("download-state").textContent = current ? [
+    downloadLabels[current.exportStatus] ? `\u7ED3\u679C\uFF1A${downloadLabels[current.exportStatus]}` : "",
+    downloadLabels[current.logExportStatus ?? "none"] ? `\u65E5\u5FD7\uFF1A${downloadLabels[current.logExportStatus ?? "none"]}` : ""
+  ].filter(Boolean).join(" ") : "";
   element("results-section").hidden = !current?.items.length;
   element("list-count").textContent = current ? `${current.items.length} \u9879` : "";
   const list = element("item-list");
@@ -216,6 +192,10 @@ async function act(operation) {
   } finally {
     busy = false;
     render();
+    if (reconnectPending) {
+      reconnectPending = false;
+      void act(() => connect("BOOT"));
+    }
   }
 }
 async function connect(action = "CONNECT") {
@@ -226,6 +206,17 @@ async function start(newTask = false) {
   const response = await rpc("START", { newTask });
   setCurrent(response.task);
   if (response.existing) notice("\u5DF2\u8BFB\u53D6\u6B64\u76EE\u5F55\u7684\u73B0\u6709\u4EFB\u52A1\uFF0C\u53EF\u7EE7\u7EED\u4EFB\u52A1\u6216\u5BFC\u51FA\u7ED3\u679C\u3002");
+}
+async function resume(retryFailed = false) {
+  const fields = { taskId: current?.id, retryFailed };
+  try {
+    setCurrent(await rpc("RESUME", fields));
+  } catch (error) {
+    const flow = asFlowError(error);
+    if (flow.code !== "ACCOUNT_RECONFIRM_REQUIRED") throw error;
+    if (!confirm("\u9875\u9762\u5DF2\u5237\u65B0\uFF0C\u65E0\u6CD5\u81EA\u52A8\u8BC6\u522B\u8D26\u53F7\u3002\u8BF7\u786E\u8BA4\u5F53\u524D\u4ECD\u767B\u5F55\u539F\u4EFB\u52A1\u7684\u5FAE\u4E91\u8D26\u53F7\uFF1B\u7EE7\u7EED\u540E\u72B6\u6001\u4E0D\u786E\u5B9A\u7684\u9879\u76EE\u5C06\u91CD\u65B0\u5206\u4EAB\u3002")) return;
+    setCurrent(await rpc("RESUME", { ...fields, acknowledged: true }));
+  }
 }
 function on(id, operation) {
   element(id).addEventListener("click", () => {
@@ -238,15 +229,15 @@ on("new-task", () => start(true));
 on("pause", async () => {
   setCurrent(await rpc("PAUSE", { taskId: current?.id }));
 });
-on("resume", async () => {
-  setCurrent(await rpc("RESUME", { taskId: current?.id }));
-});
-on("retry", async () => {
-  setCurrent(await rpc("RESUME", { taskId: current?.id, retryFailed: true }));
-});
+on("resume", () => resume());
+on("retry", () => resume(true));
 on("export", async () => {
   await rpc("EXPORT", { taskId: current?.id });
   notice("\u5DF2\u53D1\u8D77 TXT \u4E0B\u8F7D\u3002");
+});
+on("export-log", async () => {
+  await rpc("EXPORT_LOG", { taskId: current?.id });
+  notice("\u5DF2\u53D1\u8D77\u65E5\u5FD7 TXT \u4E0B\u8F7D\u3002");
 });
 on("backup", async () => {
   await rpc("BACKUP", { taskId: current?.id });
@@ -259,17 +250,11 @@ on("diagnose", async () => {
 on("focus", async () => {
   await rpc("FOCUS");
 });
-on("reconcile", async () => {
-  const hasReview = current?.items.some((item) => item.status === "needs_review" || item.status === "opening_share");
-  setCurrent(await rpc(hasReview ? "RECONCILE" : "RESUME", { taskId: current?.id, acknowledged: true }));
-  element("review-ack").checked = false;
-});
 on("delete", async () => {
   if (!confirm("\u5220\u9664\u8BE5\u4EFB\u52A1\u7684\u672C\u5730\u8FDB\u5EA6\uFF1F\u8BF7\u5148\u5BFC\u51FA\u9700\u8981\u4FDD\u7559\u7684\u8BB0\u5F55\u3002\u6B64\u64CD\u4F5C\u4E0D\u4F1A\u53D6\u6D88\u5FAE\u4E91\u5206\u4EAB\u3002")) return;
   await rpc("DELETE", { taskId: current?.id });
   await connect("BOOT");
 });
-element("review-ack").addEventListener("change", render);
 element("task-select").addEventListener("change", () => {
   void act(async () => {
     const id = element("task-select").value;
@@ -286,14 +271,15 @@ element("import-file").addEventListener("change", (event) => {
     if (file.size > 2e6) throw new Error("\u8FDB\u5EA6\u6587\u4EF6\u8D85\u8FC7 2 MB\u3002");
     const response = await rpc("IMPORT", { contents: await file.text() });
     setCurrent(response.task);
-    notice("\u8FDB\u5EA6\u5DF2\u5BFC\u5165\uFF0C\u6B63\u5728\u91CD\u65B0\u6838\u5BF9\u76EE\u5F55\u3002");
+    notice("\u8FDB\u5EA6\u5DF2\u5BFC\u5165\uFF0C\u6B63\u5728\u5339\u914D\u76EE\u5F55\u5E76\u91CD\u65B0\u5206\u4EAB\u672A\u9A8C\u8BC1\u8BB0\u5F55\u3002");
   }).finally(() => {
     element("import-file").value = "";
   });
 });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "session" && changes.targetTabId && !busy) {
-    void act(() => connect("BOOT"));
+  if (area === "session" && (changes.targetTabId || changes.targetDocumentVersion)) {
+    if (busy) reconnectPending = true;
+    else void act(() => connect("BOOT"));
     return;
   }
   if (area !== "local" || !current) return;

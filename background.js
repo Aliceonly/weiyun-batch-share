@@ -45,6 +45,11 @@ function isShareUrl(value) {
 function isPassword(value) {
   return typeof value === "string" && /^[A-Za-z0-9]{4,16}$/.test(value);
 }
+function shareUrlIdentity(value) {
+  if (!isShareUrl(value)) return null;
+  const url = new URL(value);
+  return `${url.origin}${url.pathname.replace(/\/$/, "")}`;
+}
 function parseFolderUrl(value) {
   let url;
   try {
@@ -105,6 +110,8 @@ function createTask(context, tabId, id, runId) {
     error: null,
     exportStatus: "none",
     downloadId: null,
+    logExportStatus: "none",
+    logDownloadId: null,
     importedCandidates: []
   };
 }
@@ -122,6 +129,31 @@ function requireItem(task, key) {
   const item = task.items.find((entry) => entry.key === key);
   if (!item) throw new FlowError("\u4EFB\u52A1\u9879\u76EE\u4E0D\u5B58\u5728\u3002", "INVALID_ITEM");
   return item;
+}
+function archiveAttempt(item, recordError = true) {
+  item.relatedShares = [...new Set([
+    ...item.relatedShares ?? [],
+    item.observedUrl,
+    item.candidate?.url,
+    ...item.error?.relatedUrls ?? []
+  ].filter(isShareUrl))];
+  if (recordError && item.error && !(item.attemptHistory ?? []).some((error) => error.at === item.error.at && error.code === item.error.code && error.message === item.error.message)) {
+    item.attemptHistory = [...item.attemptHistory ?? [], item.error];
+  }
+}
+function resetItem(item, now) {
+  const restartRequired = item.restartRequired || item.status !== "pending" || !!item.observedUrl || !!item.candidate || !!item.manualReview;
+  archiveAttempt(item);
+  item.status = "pending";
+  item.observedUrl = null;
+  item.observedPassword = null;
+  item.result = null;
+  item.candidate = null;
+  item.error = null;
+  delete item.manualReview;
+  if (restartRequired) item.restartRequired = true;
+  else delete item.restartRequired;
+  item.updatedAt = now;
 }
 function applyEvent(original, runId, event) {
   if (original.runId !== runId) throw new FlowError("\u65E7\u6267\u884C\u5668\u5DF2\u5931\u6548\uFF0C\u7981\u6B62\u7EE7\u7EED\u64CD\u4F5C\u3002", "STALE_RUN");
@@ -152,7 +184,6 @@ function applyEvent(original, runId, event) {
       task.items = naturalSort(event.items).map((item, index) => {
         const imported = task.importedCandidates.find((candidate) => candidate.name === item.name);
         return {
-          // Scanning supplies identity only, never authorization for manual review.
           key: item.key,
           name: item.name,
           kind: item.kind,
@@ -161,18 +192,19 @@ function applyEvent(original, runId, event) {
           scrollHint: item.scrollHint,
           pageHint: item.pageHint,
           ordinal: index + 1,
-          status: imported?.needsReview ? "needs_review" : "pending",
+          status: "pending",
           attempts: 0,
-          observedUrl: imported?.needsReview ? imported.url : null,
+          observedUrl: null,
           observedPassword: null,
           relatedShares: imported?.relatedShares ?? [],
           result: null,
           candidate: imported?.url ? { url: imported.url, password: imported.password } : null,
-          error: imported?.needsReview ? {
+          error: null,
+          attemptHistory: imported?.needsReview ? [{
             code: "IMPORTED_UNCERTAIN",
-            message: "\u5BFC\u5165\u8BB0\u5F55\u4E2D\u8BE5\u9879\u76EE\u7684\u6700\u540E\u72B6\u6001\u4E0D\u786E\u5B9A\uFF0C\u8BF7\u5148\u6253\u5F00\u6B64\u9879\u7684\u5206\u4EAB\u5F39\u7A97\u6838\u5BF9\u3002",
+            message: "\u5BFC\u5165\u8BB0\u5F55\u4E2D\u8BE5\u9879\u76EE\u72B6\u6001\u4E0D\u786E\u5B9A\uFF0C\u5C06\u91CD\u65B0\u5206\u4EAB\u5E76\u8BB0\u5F55\u672C\u6B21\u7ED3\u679C\u3002",
             at: now
-          } : null,
+          }] : [],
           updatedAt: now
         };
       });
@@ -180,13 +212,7 @@ function applyEvent(original, runId, event) {
       task.foundCount = event.expected;
       task.snapshotAt = now;
       task.status = task.pauseRequested ? "pausing" : "running";
-      task.message = `\u6E05\u5355\u5DF2\u6838\u5BF9\uFF0C\u5171 ${event.expected} \u9879\u3002`;
-      const unresolved = task.items.find((item) => item.status === "needs_review");
-      if (unresolved) {
-        task.status = "needs_review";
-        task.message = `\u8BF7\u5148\u6838\u5BF9\u201C${unresolved.name}\u201D\uFF1A\u5BFC\u5165\u8BB0\u5F55\u672A\u786E\u8BA4\u8BE5\u9879\u7684\u4E2D\u65AD\u72B6\u6001\u3002`;
-        task.error = unresolved.error;
-      }
+      task.message = `\u6E05\u5355\u5DF2\u8BFB\u53D6\uFF0C\u5171 ${event.expected} \u9879\u3002`;
       break;
     }
     case "phase": {
@@ -197,9 +223,12 @@ function applyEvent(original, runId, event) {
       if (event.url && !isShareUrl(event.url)) throw new FlowError("\u5206\u4EAB\u94FE\u63A5\u683C\u5F0F\u4E0D\u53D7\u652F\u6301\u3002", "INVALID_URL", true);
       if (event.password && !isPassword(event.password)) throw new FlowError("\u8BBF\u95EE\u5BC6\u7801\u683C\u5F0F\u5F02\u5E38\u3002", "INVALID_PASSWORD", true);
       if (event.url && item.observedUrl && item.observedUrl !== event.url) {
-        throw new FlowError("\u5206\u4EAB\u94FE\u63A5\u53D1\u751F\u53D8\u5316\uFF0C\u9700\u8981\u6838\u5BF9\u3002", "URL_CHANGED", true, [item.observedUrl, event.url]);
+        throw new FlowError("\u672C\u6B21\u64CD\u4F5C\u4E2D\u5206\u4EAB\u94FE\u63A5\u53D1\u751F\u53D8\u5316\uFF0C\u5C06\u91CD\u65B0\u5C1D\u8BD5\u3002", "URL_CHANGED", true, [item.observedUrl, event.url]);
       }
-      if (event.status === "opening_share") item.attempts += 1;
+      if (event.status === "opening_share") {
+        item.attempts += 1;
+        delete item.restartRequired;
+      }
       item.status = event.status;
       if (event.url) item.observedUrl = event.url;
       if (event.password) item.observedPassword = event.password;
@@ -211,12 +240,11 @@ function applyEvent(original, runId, event) {
     case "item_done": {
       const item = requireItem(task, event.key);
       const result = event.result;
-      const manuallyReviewed = result.verification === "manual_review" && item.manualReview?.url === result.url && item.manualReview?.password === result.password && Number.isFinite(Date.parse(item.manualReview?.acknowledgedAt));
-      if (item.status !== "verifying" || !isShareUrl(result.url) || !isPassword(result.password) || result.passwordEnabled !== true || !(result.verification === "reopened_dialog" || manuallyReviewed) || result.url !== item.observedUrl || result.password !== item.observedPassword || !Number.isFinite(Date.parse(result.verifiedAt))) {
+      if (item.status !== "verifying" || !isShareUrl(result.url) || !isPassword(result.password) || result.passwordEnabled !== true || result.verification !== "same_dialog" || result.url !== item.observedUrl || result.password !== item.observedPassword || !Number.isFinite(Date.parse(result.verifiedAt))) {
         throw new FlowError("\u94FE\u63A5\u6216\u5BC6\u7801\u672A\u901A\u8FC7\u5B8C\u6210\u6821\u9A8C\u3002", "UNVERIFIED_RESULT", true);
       }
-      const duplicate = task.items.find((entry) => entry.key !== item.key && entry.result?.url === result.url);
-      if (duplicate) throw new FlowError(`\u5206\u4EAB\u94FE\u63A5\u4E0E\u201C${duplicate.name}\u201D\u91CD\u590D\uFF0C\u9700\u8981\u6838\u5BF9\u3002`, "DUPLICATE_URL", true, [result.url]);
+      const duplicate = task.items.find((entry) => entry.key !== item.key && entry.result && shareUrlIdentity(entry.result.url) === shareUrlIdentity(result.url));
+      if (duplicate) throw new FlowError(`\u5206\u4EAB\u94FE\u63A5\u4E0E\u201C${duplicate.name}\u201D\u91CD\u590D\uFF0C\u5DF2\u505C\u6B62\u4EE5\u907F\u514D\u8BB0\u5F55\u9519\u8BEF\u9879\u76EE\u3002`, "DUPLICATE_URL", true, [result.url]);
       item.result = result;
       item.status = "done";
       item.error = null;
@@ -232,18 +260,27 @@ function applyEvent(original, runId, event) {
       item.updatedAt = now;
       break;
     }
+    case "restart": {
+      if (!["running", "pausing"].includes(task.status)) throw new FlowError("\u4EFB\u52A1\u5F53\u524D\u4E0D\u53EF\u6267\u884C\u3002", "NOT_RUNNING");
+      const item = requireItem(task, event.key);
+      if (item.status === "done" || task.currentItemKey && task.currentItemKey !== item.key) {
+        throw new FlowError("\u4E0D\u80FD\u91CD\u65B0\u5206\u4EAB\u5DF2\u5B8C\u6210\u9879\u76EE\u6216\u53E6\u4E00\u6B63\u5728\u5904\u7406\u7684\u9879\u76EE\u3002", "INVALID_TRANSITION");
+      }
+      resetItem(item, now);
+      task.currentItemKey = null;
+      task.message = `\u6B63\u5728\u91CD\u65B0\u5C1D\u8BD5 ${item.ordinal} / ${task.items.length}\uFF1A${item.name}`;
+      break;
+    }
     case "item_error": {
       const item = requireItem(task, event.key);
       if (item.status === "done") throw new FlowError("\u5DF2\u5B8C\u6210\u9879\u76EE\u4E0D\u80FD\u964D\u7EA7\u91CD\u8BD5\u3002", "INVALID_TRANSITION");
-      item.status = event.uncertain ? "needs_review" : "failed";
+      item.status = "failed";
       item.error = event.error;
+      item.attemptHistory = [...item.attemptHistory ?? [], event.error];
+      archiveAttempt(item, false);
       item.updatedAt = now;
       task.currentItemKey = null;
-      if (event.uncertain) {
-        task.status = "needs_review";
-        task.error = event.error;
-        task.message = event.error.message;
-      }
+      task.message = `\u201C${item.name}\u201D\u672C\u6B21\u5931\u8D25\uFF1A${event.error.message}`;
       break;
     }
     case "pause":
@@ -257,18 +294,25 @@ function applyEvent(original, runId, event) {
       task.currentItemKey = null;
       task.message = event.message ?? "\u5DF2\u6682\u505C\uFF0C\u5DF2\u5B8C\u6210\u7ED3\u679C\u5DF2\u4FDD\u5B58\u3002";
       break;
-    case "task_error":
-      task.status = event.uncertain ? "needs_review" : "error";
+    case "task_error": {
+      task.status = "error";
       task.error = event.error;
       task.message = event.error.message;
+      const item = task.items.find((entry) => entry.key === task.currentItemKey);
+      if (item && item.status !== "done") {
+        item.error = event.error;
+        archiveAttempt(item);
+        item.updatedAt = now;
+      }
       break;
+    }
     case "finish":
       if (task.items.some((item) => !["done", "failed"].includes(item.status))) {
-        throw new FlowError("\u4ECD\u6709\u672A\u5B8C\u6210\u6216\u9700\u8981\u6838\u5BF9\u7684\u9879\u76EE\u3002", "UNFINISHED_TASK");
+        throw new FlowError("\u4ECD\u6709\u672A\u5B8C\u6210\u9879\u76EE\u3002", "UNFINISHED_TASK");
       }
       task.status = task.items.every((item) => item.status === "done") ? "completed" : "finished_with_errors";
       task.currentItemKey = null;
-      task.message = task.status === "completed" ? "\u5168\u90E8\u5B8C\u6210\uFF0C\u6B63\u5728\u5BFC\u51FA TXT\u3002" : "\u5904\u7406\u7ED3\u675F\uFF0C\u90E8\u5206\u9879\u76EE\u5931\u8D25\uFF0C\u53EF\u4EC5\u91CD\u8BD5\u5931\u8D25\u9879\u3002";
+      task.message = task.status === "completed" ? "\u5168\u90E8\u5B8C\u6210\uFF0C\u6B63\u5728\u5BFC\u51FA\u7ED3\u679C\u548C\u65E5\u5FD7\u3002" : "\u5904\u7406\u7ED3\u675F\uFF0C\u90E8\u5206\u9879\u76EE\u5931\u8D25\uFF0C\u53EF\u4EC5\u91CD\u8BD5\u5931\u8D25\u9879\uFF1B\u6B63\u5728\u5BFC\u51FA\u7ED3\u679C\u548C\u65E5\u5FD7\u3002";
       break;
   }
   task.updatedAt = now;
@@ -278,17 +322,12 @@ function applyEvent(original, runId, event) {
 function resumeTask(task, context, tabId, runId, retryFailed = false) {
   if (task.status === "completed") throw new FlowError("\u4EFB\u52A1\u5DF2\u7ECF\u5B8C\u6210\uFF0C\u53EF\u76F4\u63A5\u5BFC\u51FA\u7ED3\u679C\u3002", "TASK_FINISHED");
   assertContext(task.context, context);
-  const next = structuredClone(task);
-  const unknown = next.items.find((item) => item.status === "opening_share" && !item.observedUrl);
-  const review = next.items.find((item) => item.status === "needs_review");
-  if (unknown || review) {
-    throw new FlowError(
-      `\u201C${(unknown ?? review).name}\u201D\u7684\u5206\u4EAB\u7ED3\u679C\u4E0D\u786E\u5B9A\u3002\u8BF7\u5148\u5728\u5FAE\u4E91\u4E2D\u6838\u5BF9\uFF0C\u518D\u4F7F\u7528\u201C\u6838\u5BF9\u5F53\u524D\u9879\u76EE\u201D\u3002`,
-      "MANUAL_REVIEW_REQUIRED"
-    );
+  if (task.status === "finished_with_errors" && (!retryFailed || !task.items.some((item) => item.status === "failed"))) {
+    throw new FlowError("\u6CA1\u6709\u5F85\u7EE7\u7EED\u9879\u76EE\uFF0C\u8BF7\u4F7F\u7528\u201C\u4EC5\u91CD\u8BD5\u5931\u8D25\u9879\u201D\u6216\u5BFC\u51FA\u5DF2\u4FDD\u5B58\u7ED3\u679C\u3002", "NO_PENDING_ITEMS");
   }
+  const next = structuredClone(task);
   if (task.context.account === null && task.context.documentNonce !== context.documentNonce) {
-    throw new FlowError("\u9875\u9762\u5DF2\u91CD\u65B0\u6253\u5F00\uFF0C\u4E14\u65E0\u6CD5\u8BC6\u522B\u539F\u8D26\u53F7\u3002\u8BF7\u5148\u4F7F\u7528\u201C\u6838\u5BF9\u8D26\u53F7\u5E76\u6062\u590D\u201D\u3002", "ACCOUNT_RECONFIRM_REQUIRED");
+    throw new FlowError("\u9875\u9762\u5DF2\u91CD\u65B0\u6253\u5F00\uFF0C\u4E14\u65E0\u6CD5\u8BC6\u522B\u539F\u8D26\u53F7\u3002\u8BF7\u786E\u8BA4\u4ECD\u4E3A\u539F\u8D26\u53F7\u540E\u7EE7\u7EED\u3002", "ACCOUNT_RECONFIRM_REQUIRED");
   }
   next.tabId = tabId;
   next.runId = runId;
@@ -299,61 +338,115 @@ function resumeTask(task, context, tabId, runId, retryFailed = false) {
   next.error = null;
   next.exportStatus = "none";
   next.downloadId = null;
-  next.message = "\u6B63\u5728\u6062\u590D\u539F\u4EFB\u52A1\u3002";
+  next.logExportStatus = "none";
+  next.logDownloadId = null;
+  next.autoExportRunId = null;
+  next.autoLogExportRunId = null;
+  next.message = "\u6B63\u5728\u6062\u590D\u539F\u4EFB\u52A1\uFF1B\u4E2D\u65AD\u6216\u72B6\u6001\u4E0D\u786E\u5B9A\u7684\u9879\u76EE\u5C06\u91CD\u65B0\u5206\u4EAB\u3002";
   next.items.forEach((item) => {
-    if (retryFailed && item.status === "failed") {
-      item.status = "pending";
-      item.error = null;
+    if (item.status !== "done" && (item.status !== "failed" || retryFailed)) {
+      resetItem(item, (/* @__PURE__ */ new Date()).toISOString());
     }
   });
   next.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   next.revision += 1;
   return next;
 }
-function taskCounts(task) {
-  const done = task.items.filter((item) => item.status === "done").length;
-  const failed = task.items.filter((item) => item.status === "failed").length;
-  const review = task.items.filter((item) => item.status === "needs_review").length;
-  return { done, failed, review, pending: task.items.length - done - failed - review };
-}
 
 // src/exporter.ts
 function oneLine(value) {
-  return value.replace(/[\r\n\u0000-\u001f]/g, " ").trim();
+  return String(value).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").trim();
 }
-function exportTxt(task, date = /* @__PURE__ */ new Date()) {
-  const counts = taskCounts(task);
-  const complete = task.status === "completed" && counts.done === task.items.length;
-  const lines = [
-    `\u5FAE\u4E91\u5206\u4EAB\u94FE\u63A5 \xB7 ${oneLine(task.context.folderName)}`,
-    `\u6765\u6E90\u76EE\u5F55\uFF1A${task.context.folderUrl}`,
-    "\u8303\u56F4\uFF1A\u5F53\u524D\u76EE\u5F55\u7684\u76F4\u63A5\u9879\u76EE\uFF0C\u6BCF\u9879\u72EC\u7ACB\u5206\u4EAB",
-    `\u72B6\u6001\uFF1A${complete ? "\u5168\u90E8\u5B8C\u6210" : "\u672A\u5B8C\u6210 / \u90E8\u5206\u7ED3\u679C"}`,
-    `\u6E05\u5355\u9879\u76EE\u6570\uFF1A${task.expectedCount ?? "\u672A\u786E\u8BA4"}`,
-    `\u5DF2\u6210\u529F\uFF1A${counts.done}\uFF1B\u5931\u8D25\uFF1A${counts.failed}\uFF1B\u9700\u6838\u5BF9\uFF1A${counts.review}\uFF1B\u5F85\u5904\u7406\uFF1A${counts.pending}`,
-    `\u5FEB\u7167\u65F6\u95F4\uFF1A${task.snapshotAt ?? "\u5C1A\u672A\u5B8C\u6210\u91C7\u96C6"}`,
-    ""
-  ];
-  for (const item of [...task.items].sort((a, b) => a.ordinal - b.ordinal)) {
-    lines.push(`${item.ordinal}. ${oneLine(item.name)}`);
-    if (item.status === "done" && item.result) {
-      lines.push(
-        `\u94FE\u63A5\uFF1A${item.result.url}`,
-        `\u5BC6\u7801\uFF1A${item.result.password}`,
-        `\u6709\u6548\u671F\uFF1A${item.result.expiry ? oneLine(item.result.expiry) : "\u672A\u786E\u8BA4\uFF0C\u4EE5\u5FAE\u4E91\u5B9E\u9645\u8BBE\u7F6E\u4E3A\u51C6"}`,
-        `\u786E\u8BA4\u65B9\u5F0F\uFF1A${item.result.verification === "manual_review" ? "\u4EBA\u5DE5\u6838\u5BF9\u5F53\u524D\u5F39\u7A97" : "\u91CD\u5F00\u5F39\u7A97\u81EA\u52A8\u9A8C\u8BC1"}`,
-        `\u9A8C\u8BC1\u65F6\u95F4\uFF1A${item.result.verifiedAt}`
-      );
-    } else {
-      lines.push(`\u72B6\u6001\uFF1A${item.status === "needs_review" ? "\u9700\u6838\u5BF9" : item.status === "failed" ? "\u5931\u8D25" : "\u5F85\u5B8C\u6210"}`);
-      if (item.observedUrl) lines.push(`\u5DF2\u89C2\u5BDF\u94FE\u63A5\uFF08\u5C1A\u672A\u786E\u8BA4\u5B8C\u6210\uFF09\uFF1A${item.observedUrl}`);
-      if (item.error) lines.push(`\u539F\u56E0\uFF1A${oneLine(item.error.message)}`);
-      for (const url of /* @__PURE__ */ new Set([...item.relatedShares ?? [], ...item.error?.relatedUrls ?? []])) lines.push(`\u9700\u6838\u5BF9\u94FE\u63A5\uFF1A${url}`);
+function hasExportableResult(item) {
+  const result = item.result;
+  return item.status === "done" && result !== null && isShareUrl(result?.url) && result.url === oneLine(result.url) && isPassword(result.password) && result.passwordEnabled === true;
+}
+function exportTxt(task, _date = /* @__PURE__ */ new Date()) {
+  const lines = [...task.items].sort((a, b) => a.ordinal - b.ordinal).filter(hasExportableResult).map((item) => `${item.ordinal}.\u94FE\u63A5\uFF1A${item.result.url} \u5BC6\u7801\uFF1A${item.result.password}`);
+  return `\uFEFF${lines.length ? `${lines.join("\r\n")}\r
+` : ""}`;
+}
+function exportLog(task, date = /* @__PURE__ */ new Date()) {
+  const lines = ["\u5FAE\u4E91\u5206\u4EAB\u5BFC\u51FA\u65E5\u5FD7"];
+  const add = (label, value) => {
+    lines.push(`${label}\uFF1A${value == null ? "\u65E0" : oneLine(value)}`);
+  };
+  const addUrls = (label, urls = []) => {
+    for (const url of urls) add(label, url);
+  };
+  const addError = (label, error) => {
+    if (!error) {
+      add(label, "\u65E0");
+      return;
     }
+    add(`${label}\u4EE3\u7801`, error.code);
+    add(`${label}\u539F\u56E0`, error.message);
+    add(`${label}\u65F6\u95F4`, error.at);
+    addUrls(`${label}\u76F8\u5173 URL\uFF08\u5386\u53F2\u8BB0\u5F55\uFF0C\u4E0D\u4EE3\u8868\u5DF2\u53D6\u6D88\uFF09`, error.relatedUrls);
+  };
+  const exportable = task.items.filter(hasExportableResult).length;
+  const complete = task.status === "completed" && task.snapshotAt !== null && task.expectedCount === task.items.length && task.foundCount === task.items.length && exportable === task.items.length;
+  const counts = /* @__PURE__ */ new Map();
+  for (const item of task.items) counts.set(item.status, (counts.get(item.status) ?? 0) + 1);
+  add("\u76EE\u5F55\u539F\u540D", task.context.folderName);
+  add("\u6765\u6E90\u76EE\u5F55", task.context.folderUrl);
+  add("\u76EE\u5F55 ID", task.context.folderId);
+  add("\u8303\u56F4", "\u5F53\u524D\u76EE\u5F55\u7684\u76F4\u63A5\u9879\u76EE\uFF0C\u6BCF\u9879\u72EC\u7ACB\u5206\u4EAB");
+  add("\u4EFB\u52A1 ID", task.id);
+  add("\u6267\u884C ID", task.runId);
+  add("\u4EFB\u52A1\u72B6\u6001", task.status);
+  add("\u662F\u5426\u5B8C\u6574", complete ? "\u662F\uFF08\u5168\u90E8\u5B8C\u6210\uFF09" : "\u5426\uFF08\u672A\u5B8C\u6210 / \u90E8\u5206\u7ED3\u679C\uFF09");
+  add("\u6E05\u5355\u9879\u76EE\u6570", task.expectedCount ?? "\u672A\u786E\u8BA4");
+  add("\u5DF2\u53D1\u73B0\u9879\u76EE\u6570", task.foundCount);
+  add("\u5DF2\u8BB0\u5F55\u9879\u76EE\u6570", task.items.length);
+  add("\u53EF\u5BFC\u51FA\u6210\u529F\u9879", exportable);
+  add("\u672A\u5BFC\u51FA\u9879\u76EE\u6570", task.items.length - exportable);
+  add("\u5404\u9879\u72B6\u6001\u6570\u91CF", [...counts].map(([status, count]) => `${status}=${count}`).join("\uFF1B") || "\u65E0");
+  add("\u521B\u5EFA\u65F6\u95F4", task.createdAt);
+  add("\u66F4\u65B0\u65F6\u95F4", task.updatedAt);
+  add("\u5FEB\u7167\u65F6\u95F4", task.snapshotAt);
+  add("\u5BFC\u51FA\u65F6\u95F4", date.toISOString());
+  add("\u4EFB\u52A1\u63D0\u793A", task.message);
+  addError("\u4EFB\u52A1\u9519\u8BEF", task.error);
+  add("\u9A8C\u8BC1\u8FB9\u754C", "\u7ED3\u679C TXT \u4EC5\u6536\u5F55 status=done\u3001URL/\u5BC6\u7801\u683C\u5F0F\u5408\u6CD5\u4E14 passwordEnabled=true \u7684\u5F53\u524D result\uFF1B\u672A\u72EC\u7ACB\u9A8C\u8BC1\u63A5\u6536\u7AEF\u8BBF\u95EE\uFF0C\u4E0D\u4FDD\u8BC1\u94FE\u63A5\u6301\u7EED\u6709\u6548\u3002");
+  add("\u5386\u53F2\u8BF4\u660E", "\u5386\u53F2\u76F8\u5173\u94FE\u63A5\u4E0D\u4EE3\u8868\u5DF2\u53D6\u6D88\uFF1B\u4E2D\u65AD\u6216\u5BC6\u7801\u4E0D\u786E\u5B9A\u540E\u7684\u91CD\u590D\u5206\u4EAB\u53EF\u80FD\u4FDD\u7559\u65E7\u94FE\u63A5\uFF0C\u4EC5\u6700\u540E\u6210\u529F\u7684\u5F53\u524D result \u8FDB\u5165\u7ED3\u679C TXT\u3002");
+  for (const item of [...task.items].sort((a, b) => a.ordinal - b.ordinal)) {
     lines.push("");
+    add("\u9879\u76EE", `${item.ordinal}. ${item.name}`);
+    add("\u9879\u76EE key", item.key);
+    add("\u9879\u76EE\u539F\u540D", item.name);
+    add("\u9879\u76EE\u7C7B\u578B", item.kind);
+    add("\u9879\u76EE\u72B6\u6001", item.status);
+    add("\u5C1D\u8BD5\u6B21\u6570", item.attempts);
+    add("\u9879\u76EE\u66F4\u65B0\u65F6\u95F4", item.updatedAt);
+    add("\u7ED3\u679C TXT", hasExportableResult(item) ? "\u5DF2\u6536\u5F55\u5F53\u524D result" : item.status === "done" ? "\u672A\u6536\u5F55\uFF1A\u5F53\u524D result \u7F3A\u5931\u3001\u51ED\u636E\u683C\u5F0F\u65E0\u6548\u6216\u5BC6\u7801\u672A\u542F\u7528" : "\u672A\u6536\u5F55\uFF1A\u5F53\u524D\u72B6\u6001\u4E0D\u662F done");
+    addError("\u9879\u76EE\u9519\u8BEF", item.error);
+    add("\u5F53\u524D result URL", item.result?.url);
+    if (item.result) {
+      add("result \u5BC6\u7801", item.result.password);
+      add("result passwordEnabled", item.result.passwordEnabled);
+      add("result \u6709\u6548\u671F", item.result.expiry);
+      add("result \u9A8C\u8BC1\u65F6\u95F4", item.result.verifiedAt);
+      add("result verification\uFF08\u65E7\u503C\u4EC5\u4E3A\u5386\u53F2\u6807\u7B7E\uFF09", item.result.verification);
+      if (item.result.reviewSource) add("result reviewSource\uFF08\u5386\u53F2\u6807\u7B7E\uFF09", item.result.reviewSource);
+    }
+    add("\u5F53\u524D candidate URL\uFF08\u975E\u6210\u529F\u51ED\u636E\uFF09", item.candidate?.url);
+    add("candidate \u5BC6\u7801", item.candidate?.password);
+    add("\u5F53\u524D observed URL\uFF08\u975E\u6210\u529F\u51ED\u636E\uFF09", item.observedUrl);
+    add("observed \u5BC6\u7801", item.observedPassword);
+    addUrls("\u5386\u53F2\u76F8\u5173\u94FE\u63A5\uFF08\u4E0D\u4EE3\u8868\u5DF2\u53D6\u6D88\uFF09", item.relatedShares);
+    const history = item.attemptHistory ?? [];
+    add("\u5C1D\u8BD5\u9519\u8BEF\u5386\u53F2 attemptHistory \u6570\u91CF", history.length);
+    history.forEach((error, index) => addError(`attemptHistory[${index + 1}] `, error));
   }
-  if (task.error) lines.push(`\u4EFB\u52A1\u63D0\u793A\uFF1A${oneLine(task.error.message)}`, "");
-  lines.push(`\u5BFC\u51FA\u65F6\u95F4\uFF1A${date.toISOString()}`, "\u8BF4\u660E\uFF1A\u8BB0\u5F55\u4EE3\u8868\u9A8C\u8BC1\u5F53\u65F6\u7684\u72B6\u6001\uFF0C\u94FE\u63A5\u662F\u5426\u6301\u7EED\u6709\u6548\u4EE5\u5FAE\u4E91\u4E3A\u51C6\u3002");
+  for (const [index, candidate] of task.importedCandidates.entries()) {
+    lines.push("");
+    add("\u5BFC\u5165\u5019\u9009\u8BB0\u5F55", index + 1);
+    add("\u5019\u9009\u539F\u540D", candidate.name);
+    add("\u5BFC\u5165 candidate URL\uFF08\u975E\u6210\u529F\u51ED\u636E\uFF09", candidate.url);
+    add("\u5BFC\u5165 candidate \u5BC6\u7801", candidate.password);
+    addUrls("\u5BFC\u5165\u5386\u53F2\u76F8\u5173\u94FE\u63A5\uFF08\u4E0D\u4EE3\u8868\u5DF2\u53D6\u6D88\uFF09", candidate.relatedShares);
+  }
   return `\uFEFF${lines.join("\r\n")}\r
 `;
 }
@@ -361,9 +454,10 @@ function safeFilename(name) {
   const value = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").slice(0, 70);
   return value && !/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(value) ? value : "\u5FAE\u4E91\u76EE\u5F55";
 }
-function exportFilename(task, extension = "txt") {
+function exportFilename(task, extension = "txt", purpose = "results") {
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "").replace("T", "_");
-  return `\u5FAE\u4E91_${safeFilename(task.context.folderName)}_${task.status === "completed" ? "\u5206\u4EAB\u94FE\u63A5" : "\u90E8\u5206\u7ED3\u679C"}_${stamp}.${extension}`;
+  const label = purpose === "log" ? "\u5BFC\u51FA\u65E5\u5FD7" : purpose === "backup" ? "\u8FDB\u5EA6\u5907\u4EFD" : task.status === "completed" ? "\u5206\u4EAB\u94FE\u63A5" : "\u90E8\u5206\u7ED3\u679C";
+  return `\u5FAE\u4E91_${safeFilename(task.context.folderName)}_${label}_${stamp}.${extension}`;
 }
 function dataUrl(text, mime = "text/plain") {
   return `data:${mime};charset=utf-8,${encodeURIComponent(text)}`;
@@ -395,7 +489,7 @@ function parseImport(contents, context) {
       const url = result?.url ?? row.observedUrl ?? candidate?.url ?? null;
       const password = result?.password ?? row.observedPassword ?? candidate?.password ?? null;
       const relatedShares = Array.isArray(row.relatedShares) ? row.relatedShares.map(String) : [];
-      const uncertain = ["opening_share", "link_observed", "securing", "verifying", "needs_review"].includes(String(row.status)) || relatedShares.length > 0;
+      const uncertain = ["opening_share", "link_observed", "securing", "verifying", "needs_review"].includes(String(row.status)) || relatedShares.length > 0 || result?.verification === "manual_review";
       if (url !== null || uncertain) {
         candidates.push({
           name: String(row.name ?? ""),
@@ -436,7 +530,7 @@ function parseImport(contents, context) {
   } else {
     throw new FlowError("\u4E0D\u662F\u53D7\u652F\u6301\u7684\u63D2\u4EF6\u8FDB\u5EA6\u6216\u65E7\u7248\u5FAE\u4E91\u5206\u4EAB checkpoint\u3002", "INVALID_IMPORT");
   }
-  if (candidates.length > 1e4 || !candidates.length) throw new FlowError("\u8FDB\u5EA6\u4E2D\u6CA1\u6709\u53EF\u6838\u5BF9\u7684\u5206\u4EAB\u8BB0\u5F55\u3002", "INVALID_IMPORT");
+  if (candidates.length > 1e4 || !candidates.length) throw new FlowError("\u8FDB\u5EA6\u4E2D\u6CA1\u6709\u53EF\u5BFC\u5165\u7684\u5206\u4EAB\u8BB0\u5F55\u3002", "INVALID_IMPORT");
   const names = /* @__PURE__ */ new Set();
   for (const candidate of candidates) {
     if (!candidate.name || candidate.name.length > 1024 || names.has(candidate.name)) throw new FlowError("\u8FDB\u5EA6\u5305\u542B\u65E0\u6548\u6216\u91CD\u590D\u9879\u76EE\u540D\u3002", "INVALID_IMPORT");
@@ -565,7 +659,7 @@ async function folderTasks(context) {
           status: "interrupted",
           revision: value.revision + 1,
           updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-          message: "\u539F\u6267\u884C\u5668\u672A\u8FD0\u884C\u6216\u5DF2\u5931\u8054\uFF0C\u8FDB\u5EA6\u5DF2\u4FDD\u5B58\u3002\u8BF7\u6838\u5BF9\u9875\u9762\u540E\u7EE7\u7EED\uFF1B\u4E0D\u786E\u5B9A\u9879\u76EE\u9700\u5148\u624B\u52A8\u6838\u5BF9\u3002"
+          message: "\u539F\u6267\u884C\u5668\u672A\u8FD0\u884C\u6216\u5DF2\u5931\u8054\uFF0C\u8FDB\u5EA6\u5DF2\u4FDD\u5B58\u3002\u53EF\u7EE7\u7EED\u4EFB\u52A1\uFF1B\u4E0D\u786E\u5B9A\u9879\u76EE\u5C06\u91CD\u65B0\u5206\u4EAB\u3002"
         };
       });
     }
@@ -604,29 +698,62 @@ async function startRunner(task) {
   }
   return task;
 }
-async function exportTask(task, backup = false, automatic = false) {
-  if (automatic && task.exportStatus !== "none") return task.downloadId ?? -1;
-  if (automatic) await store.modify(task.id, (value) => ({ ...value, exportStatus: "requested" }));
+async function exportTask(task, mode = "results", automatic = false) {
+  const backup = mode === "backup";
+  const statusKey = mode === "log" ? "logExportStatus" : "exportStatus";
+  const idKey = mode === "log" ? "logDownloadId" : "downloadId";
+  const autoKey = mode === "log" ? "autoLogExportRunId" : "autoExportRunId";
+  task = await getTask(task.id);
+  if (automatic && task[autoKey] === task.runId) return task[idKey] ?? -1;
+  if (!backup) await store.modify(task.id, (value) => ({
+    ...value,
+    [statusKey]: "requested",
+    ...automatic ? { [autoKey]: task.runId } : {}
+  }));
   try {
-    const contents = backup ? JSON.stringify(task, null, 2) : exportTxt(task);
+    const contents = backup ? JSON.stringify(task, null, 2) : mode === "log" ? exportLog(task) : exportTxt(task);
     const downloadId = await chrome.downloads.download({
       url: dataUrl(contents, backup ? "application/json" : "text/plain"),
-      filename: backup ? exportFilename(task, "json") : exportFilename(task),
+      filename: exportFilename(task, backup ? "json" : "txt", mode),
       conflictAction: "uniquify",
       saveAs: false
     });
     if (!backup) {
-      await store.modify(task.id, (value) => ({ ...value, exportStatus: "requested", downloadId }));
+      await store.modify(task.id, (value) => ({ ...value, [statusKey]: "requested", [idKey]: downloadId }));
       const entry = (await chrome.downloads.search({ id: downloadId }))[0];
       if (entry?.state === "complete" || entry?.state === "interrupted") {
-        await store.modify(task.id, (value) => ({ ...value, exportStatus: entry.state === "complete" ? "downloaded" : "failed" }));
+        await store.modify(task.id, (value) => ({ ...value, [statusKey]: entry.state === "complete" ? "downloaded" : "failed" }));
       }
     }
     return downloadId;
   } catch {
-    if (!backup) await store.modify(task.id, (value) => ({ ...value, exportStatus: "failed", message: "\u7ED3\u679C\u5DF2\u4FDD\u5B58\uFF0C\u4E0B\u8F7D\u672A\u5B8C\u6210\uFF0C\u53EF\u91CD\u65B0\u5BFC\u51FA\u3002" }));
+    if (!backup) await store.modify(task.id, (value) => ({ ...value, [statusKey]: "failed", message: "\u7ED3\u679C\u5DF2\u4FDD\u5B58\uFF0C\u4E0B\u8F7D\u672A\u5B8C\u6210\uFF0C\u53EF\u91CD\u65B0\u5BFC\u51FA\u7ED3\u679C\u6216\u65E5\u5FD7\u3002" }));
     throw new FlowError("\u4E0B\u8F7D\u672A\u5B8C\u6210\uFF0C\u7ED3\u679C\u4ECD\u5DF2\u4FDD\u5B58\u3002\u8BF7\u91CD\u65B0\u70B9\u51FB\u5BFC\u51FA\u3002", "EXPORT_FAILED");
   }
+}
+async function automaticExports(taskId) {
+  const task = await getTask(taskId);
+  if (!["completed", "finished_with_errors"].includes(task.status)) return [];
+  const downloads = [];
+  let failure = null;
+  for (const mode of ["results", "log"]) {
+    try {
+      downloads.push(await exportTask(task, mode, true));
+    } catch (error) {
+      failure = error;
+    }
+  }
+  if (failure) throw failure;
+  return downloads;
+}
+async function connectedTasks(context) {
+  const tasks = await folderTasks(context);
+  const latest = tasks[0];
+  if (latest && ["completed", "finished_with_errors"].includes(latest.status) && (latest.autoExportRunId !== latest.runId || latest.autoLogExportRunId !== latest.runId)) {
+    await command(() => automaticExports(latest.id)).catch(() => void 0);
+    tasks[0] = await getTask(latest.id);
+  }
+  return tasks;
 }
 async function getTask(id) {
   if (typeof id !== "string") throw new FlowError("\u7F3A\u5C11\u4EFB\u52A1\u6807\u8BC6\u3002", "INVALID_TASK");
@@ -641,12 +768,12 @@ async function panelCommand(raw) {
     if (id === void 0) throw new FlowError("\u672A\u627E\u5230\u5F53\u524D tab\u3002", "NO_TARGET");
     const context = await attach(id);
     await chrome.storage.session.set({ targetTabId: id });
-    return { context, tabId: id, tasks: await folderTasks(context) };
+    return { context, tabId: id, tasks: await connectedTasks(context) };
   }
   if (raw.action === "BOOT") {
     const id = await targetTabId();
     const context = await attach(id);
-    return { context, tabId: id, tasks: await folderTasks(context) };
+    return { context, tabId: id, tasks: await connectedTasks(context) };
   }
   if (raw.action === "LOAD") return getTask(raw.taskId);
   if (raw.action === "FOCUS") {
@@ -680,7 +807,7 @@ async function panelCommand(raw) {
     if (existing && raw.newTask !== true && raw.action !== "IMPORT") return { task: existing, existing: true };
     if (existing && !["completed", "finished_with_errors", "error"].includes(existing.status)) {
       if (raw.action === "IMPORT") throw new FlowError("\u8BE5\u76EE\u5F55\u5DF2\u6709\u672A\u5B8C\u6210\u4EFB\u52A1\uFF0C\u8BF7\u5148\u6062\u590D\u6216\u5BFC\u51FA\u5E76\u5220\u9664\u65E7\u4EFB\u52A1\uFF0C\u518D\u5BFC\u5165\u3002", "EXISTING_TASK");
-      if (raw.newTask === true) throw new FlowError("\u8BE5\u76EE\u5F55\u6709\u672A\u5B8C\u6210\u6216\u5F85\u6838\u5BF9\u4EFB\u52A1\uFF0C\u8BF7\u5148\u5904\u7406\u539F\u4EFB\u52A1\u3002", "EXISTING_TASK");
+      if (raw.newTask === true) throw new FlowError("\u8BE5\u76EE\u5F55\u6709\u672A\u5B8C\u6210\u4EFB\u52A1\uFF0C\u8BF7\u5148\u7EE7\u7EED\u539F\u4EFB\u52A1\u3002", "EXISTING_TASK");
     }
     const task2 = createTask(context, tabId, crypto.randomUUID(), crypto.randomUUID());
     if (raw.action === "IMPORT") {
@@ -692,56 +819,28 @@ async function panelCommand(raw) {
   }
   const task = await getTask(raw.taskId);
   if (raw.action === "PAUSE") return store.event(task.id, task.runId, { type: "pause" });
-  if (raw.action === "EXPORT") return exportTask(task, false);
-  if (raw.action === "BACKUP") return exportTask(task, true);
+  if (raw.action === "EXPORT") return exportTask(task);
+  if (raw.action === "EXPORT_LOG") return exportTask(task, "log");
+  if (raw.action === "BACKUP") return exportTask(task, "backup");
   if (raw.action === "DELETE") {
     await ensureIdle(task);
     if (isActive(task)) throw new FlowError("\u8BF7\u5148\u6682\u505C\u4EFB\u52A1\u3002", "RUNNER_BUSY");
     await chrome.storage.local.remove(`task:${task.id}`);
     return null;
   }
-  if (["RESUME", "RECONCILE"].includes(raw.action)) {
+  if (raw.action === "RESUME") {
     await ensureIdle(task);
     const tabId = await targetTabId();
     const context = await attach(tabId);
     assertContext(task.context, context);
-    let reconciled = task;
+    let recoverable = task;
     if (raw.acknowledged === true && task.context.account === null) {
-      reconciled = { ...reconciled, context: { ...task.context, documentNonce: context.documentNonce } };
+      recoverable = { ...task, context: { ...task.context, documentNonce: context.documentNonce } };
     }
-    if (raw.action === "RECONCILE") {
-      if (raw.acknowledged !== true) throw new FlowError("\u8BF7\u5148\u6838\u5BF9\u9879\u76EE\u548C\u76F8\u5173\u94FE\u63A5\uFF0C\u518D\u52FE\u9009\u6838\u5BF9\u8BF4\u660E\u3002", "REVIEW_REQUIRED");
-      const item = task.items.find((entry) => entry.status === "needs_review" || entry.status === "opening_share");
-      if (!item) throw new FlowError("\u6CA1\u6709\u9700\u8981\u624B\u52A8\u6838\u5BF9\u7684\u9879\u76EE\u3002", "NO_REVIEW_ITEM");
-      const observation = await page(tabId, "READ_REVIEW", { item });
-      if (observation.name !== item.name || !isShareUrl(observation.url)) throw new FlowError("\u8BF7\u6253\u5F00\u5BF9\u5E94\u9879\u76EE\u7684\u5206\u4EAB\u5F39\u7A97\u3002", "WRONG_SHARE");
-      if (observation.passwordEnabled !== true || !isPassword(observation.password)) throw new FlowError("\u5F53\u524D\u5206\u4EAB\u5C1A\u672A\u663E\u793A\u6709\u6548\u5BC6\u7801\u3002\u8BF7\u5148\u5728\u5FAE\u4E91\u5F39\u7A97\u4E2D\u6DFB\u52A0\u5E76\u6838\u5BF9\u5BC6\u7801\uFF0C\u518D\u91C7\u7528\u5F53\u524D\u94FE\u63A5\u3002", "PASSWORD_UNCONFIRMED");
-      const duplicate = task.items.find((entry) => entry.key !== item.key && entry.result?.url === observation.url);
-      if (duplicate) throw new FlowError(`\u5206\u4EAB\u94FE\u63A5\u4E0E\u201C${duplicate.name}\u201D\u91CD\u590D\uFF0C\u8BF7\u6253\u5F00\u6B63\u786E\u9879\u76EE\u7684\u5206\u4EAB\u5F39\u7A97\u540E\u91CD\u65B0\u6838\u5BF9\u3002`, "DUPLICATE_URL");
-      const acknowledgedAt = (/* @__PURE__ */ new Date()).toISOString();
-      reconciled = {
-        ...reconciled,
-        items: reconciled.items.map((entry) => entry.key !== item.key ? entry : {
-          ...entry,
-          status: "verifying",
-          observedUrl: observation.url,
-          observedPassword: observation.password,
-          // Bind manual approval to this exact protected share, not future dialogs.
-          manualReview: { url: observation.url, password: observation.password, acknowledgedAt },
-          relatedShares: [...new Set([
-            ...entry.relatedShares ?? [],
-            entry.observedUrl,
-            entry.candidate?.url,
-            ...entry.error?.relatedUrls ?? []
-          ].filter((url) => isShareUrl(url) && url !== observation.url))],
-          result: null,
-          candidate: null,
-          error: null,
-          updatedAt: acknowledgedAt
-        })
-      };
-    }
-    const resumed = resumeTask(reconciled, context, tabId, crypto.randomUUID(), raw.retryFailed === true);
+    const latestContext = await page(tabId, "CONTEXT");
+    assertContext(context, latestContext);
+    if (latestContext.documentNonce !== context.documentNonce) throw new FlowError("\u6062\u590D\u671F\u95F4\u9875\u9762\u5DF2\u5237\u65B0\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u540E\u7EE7\u7EED\u3002", "STALE_DOCUMENT");
+    const resumed = resumeTask(recoverable, context, tabId, crypto.randomUUID(), raw.retryFailed === true);
     await store.modify(task.id, (current) => {
       if (current.revision !== task.revision) throw new FlowError("\u4EFB\u52A1\u72B6\u6001\u5DF2\u66F4\u65B0\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u3002", "REVISION_CONFLICT");
       return resumed;
@@ -762,16 +861,21 @@ async function runnerCommand(raw, sender) {
       "phase",
       "item_done",
       "related_share",
+      "restart",
       "item_error",
       "paused",
       "task_error",
       "finish"
     ].includes(event.type)) throw new FlowError("\u975E\u6CD5\u72B6\u6001\u547D\u4EE4\u3002", "INVALID_EVENT");
-    return store.event(task.id, task.runId, event);
+    const saved = await store.event(task.id, task.runId, event);
+    if (event.type === "finish") {
+      void command(() => automaticExports(saved.id)).catch(() => void 0);
+    }
+    return saved;
   }
   if (raw.action === "AUTO_EXPORT") {
     if (!["completed", "finished_with_errors"].includes(task.status)) throw new FlowError("\u4EFB\u52A1\u5C1A\u672A\u7ED3\u675F\u3002", "UNFINISHED_TASK");
-    return exportTask(task, false, true);
+    return automaticExports(task.id);
   }
   throw new FlowError("\u4E0D\u652F\u6301\u7684\u6267\u884C\u5668\u547D\u4EE4\u3002", "UNKNOWN_COMMAND");
 }
@@ -781,7 +885,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
   const runner = !!sender.tab && ["GET_TASK", "COMMIT", "AUTO_EXPORT"].includes(raw.action);
   if (!panel && !runner) return false;
   void ready.then(
-    () => panel ? ["START", "IMPORT", "RESUME", "RECONCILE", "DELETE"].includes(raw.action) ? command(() => panelCommand(raw)) : panelCommand(raw) : runnerCommand(raw, sender)
+    () => panel ? ["START", "IMPORT", "RESUME", "DELETE", "EXPORT", "EXPORT_LOG", "BACKUP"].includes(raw.action) ? command(() => panelCommand(raw)) : panelCommand(raw) : raw.action === "AUTO_EXPORT" ? command(() => runnerCommand(raw, sender)) : runnerCommand(raw, sender)
   ).then((data) => sendResponse({ ok: true, data }), (error) => {
     const flow = asFlowError(error);
     sendResponse({ ok: false, error: { message: flow.message, code: flow.code, uncertain: flow.uncertain, relatedUrls: flow.relatedUrls } });
@@ -794,13 +898,18 @@ chrome.action.onClicked.addListener((tab) => {
   void chrome.storage.session.set({ targetTabId: tab.id });
 });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === "complete") {
+    void chrome.storage.session.get("targetTabId").then((value) => {
+      if (value.targetTabId === tabId) return chrome.storage.session.set({ targetDocumentVersion: crypto.randomUUID() });
+    }).catch(() => void 0);
+  }
   if (changeInfo.status !== "loading" && !changeInfo.url) return;
   void ready.then(allTasks).then(async (tasks) => {
     for (const task of tasks.filter((entry) => entry.tabId === tabId && isActive(entry))) {
       await store.modify(task.id, (value) => ({
         ...value,
         status: "interrupted",
-        message: "\u76EE\u6807\u9875\u9762\u5DF2\u5237\u65B0\u6216\u5BFC\u822A\u3002\u8BF7\u56DE\u5230\u539F\u76EE\u5F55\uFF0C\u6838\u5BF9\u5E76\u6062\u590D\u3002",
+        message: "\u76EE\u6807\u9875\u9762\u5DF2\u5237\u65B0\u6216\u5BFC\u822A\u3002\u56DE\u5230\u539F\u76EE\u5F55\u540E\u53EF\u7EE7\u7EED\uFF1B\u672A\u5B8C\u6210\u9879\u76EE\u5C06\u91CD\u65B0\u5206\u4EAB\u3002",
         revision: value.revision + 1,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }));
@@ -824,11 +933,11 @@ chrome.downloads.onChanged.addListener((delta) => {
   const state = delta.state?.current;
   if (state !== "complete" && state !== "interrupted") return;
   void ready.then(allTasks).then(async (tasks) => {
-    const task = tasks.find((entry) => entry.downloadId === delta.id);
+    const task = tasks.find((entry) => entry.downloadId === delta.id || entry.logDownloadId === delta.id);
     if (!task) return;
     await store.modify(task.id, (value) => ({
       ...value,
-      exportStatus: state === "complete" ? "downloaded" : "failed"
+      [value.logDownloadId === delta.id ? "logExportStatus" : "exportStatus"]: state === "complete" ? "downloaded" : "failed"
     }));
   }).catch(() => void 0);
 });
