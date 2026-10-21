@@ -79,6 +79,7 @@
   // src/adapter.ts
   var selectors = {
     row: [
+      ".mod-list-group-files .list-group > .list-group-item",
       ".file-list .file-item",
       ".file-list .list-item",
       ".file-list li",
@@ -94,9 +95,9 @@
       "[data-dir-id]",
       "[data-folder-id]"
     ].join(","),
-    nearestRow: "[data-file-id],[data-dir-id],[data-folder-id],[data-id],li,[role='row'],.file-item,.list-item,.file-list-item,.list-tr",
-    name: ".file-name,.filename,.file_name,.fileName,[data-file-name],[class*='file-name'],[class*='file_name'],[class*='fileName']",
-    nameWithinRow: ".file-name,.filename,.file_name,.fileName,[data-file-name],[class*='file-name'],.name a,a.name,.name,.item-name,.list-name",
+    nearestRow: "[data-file-id],[data-dir-id],[data-folder-id],[data-id],li,[role='row'],.file-item,.list-item,.file-list-item,.list-tr,.list-group-item",
+    name: ".mod-list-group-files .item-tit .info .tit,.file-name,.filename,.file_name,.fileName,[data-file-name],[class*='file-name'],[class*='file_name'],[class*='fileName']",
+    nameWithinRow: ".item-tit .info .tit,.file-name,.filename,.file_name,.fileName,[data-file-name],[class*='file-name'],.name a,a.name,.name,.item-name,.list-name",
     excluded: "aside,nav,header,[class*='breadcrumb'],[class*='bread-crumb'],.modal-dialog,[role='dialog'],[role='menu'],.context-menu,.contextmenu",
     breadcrumb: [
       ".breadcrumb .current",
@@ -116,7 +117,7 @@
     close: "button[aria-label='\u5173\u95ED\u5F39\u7A97'],[aria-label='\u5173\u95ED\u5F39\u7A97'],button[aria-label='\u5173\u95ED'],.modal-dialog-close,.modal-close,.dialog-close,.btn-close,[title='\u5173\u95ED']",
     total: "[class*='total'],[class*='count'],[class*='footer'],[class*='bottom'],[class*='tips'],[role='status']",
     error: ".toast,.toast-message,.notification,[role='alert'],.error-tip,.error-msg,.mod-login,.captcha,.tcaptcha-transform",
-    loading: ".file-list-loading,.list-loading,.loading-mask,.mod-loading,[aria-busy='true']",
+    loading: ".mod-list-group-files .load-more-main .mod-loadmore.load,.file-list-loading,.list-loading,.loading-mask,.mod-loading,[aria-busy='true']",
     next: ".pagination-next,.page-next,[aria-label='\u4E0B\u4E00\u9875'],[title='\u4E0B\u4E00\u9875']",
     previous: ".pagination-prev,.page-prev,[aria-label='\u4E0A\u4E00\u9875'],[title='\u4E0A\u4E00\u9875']"
   };
@@ -292,7 +293,7 @@
           } catch {
           }
         }
-        const isFolder = !!folderHref || /^(folder|dir|directory)$/i.test(row.getAttribute("data-type") ?? "") || !!row.querySelector(".icon-folder,[class*='icon-folder'],[class*='folder-icon'],[data-type='folder']") || /(?:^|[\s_-])(folder|directory)(?:$|[\s_-])/i.test(row.className);
+        const isFolder = !!folderHref || /^(folder|dir|directory)$/i.test(row.getAttribute("data-type") ?? "") || !!row.querySelector(".icon-folder,[class*='icon-folder'],[class*='folder-icon'],[data-type='folder'],.thumb > .icon-file-m") || /(?:^|[\s_-])(folder|directory)(?:$|[\s_-])/i.test(row.className);
         const kind = isFolder ? "folder" : row.querySelector("[class*='icon-file'],[class*='file-icon']") ? "file" : "unknown";
         let siteId = folderHref?.[1] ? `folder:${folderHref[1]}` : null;
         for (const attr of ["data-file-id", "data-dir-id", "data-folder-id", "data-fid", "data-id"]) {
@@ -302,7 +303,7 @@
             break;
           }
         }
-        const size = text(row.querySelector(".file-size,.size,[data-size]"));
+        const size = text(row.querySelector(".txt-size,.file-size,.size,[data-size]"));
         const modified = row.getAttribute("data-mtime") || row.getAttribute("data-modify-time") || "";
         const fingerprint = JSON.stringify([name, kind, size, modified]);
         const key = `${context.folderId}/${siteId ?? `name:${encodeURIComponent(name)}:${kind}`}`;
@@ -571,10 +572,12 @@
     diagnostics() {
       let context = null;
       let rows = [];
+      let parsedRowCount = 0;
       let error = null;
       try {
         context = this.context();
         rows = this.rows();
+        parsedRowCount = this.readRows().length;
       } catch (caught) {
         error = String(caught);
       }
@@ -608,7 +611,29 @@
         "mod-contextmenu",
         "dropdown-menu",
         "menu-list",
-        "disk-context-menu"
+        "disk-context-menu",
+        "mod-list-group",
+        "mod-list-group-files",
+        "list-group-bd",
+        "list-group-wrapper",
+        "list-group",
+        "list-group-item",
+        "item-inner",
+        "item-tit",
+        "item-info",
+        "item-info-list",
+        "info",
+        "tit",
+        "thumb",
+        "label",
+        "txt",
+        "txt-size",
+        "txt-time",
+        "icon",
+        "icon-m",
+        "icon-file-m",
+        "icon-check-s",
+        "icon-checkbox"
       ]);
       const safeAttributes = /* @__PURE__ */ new Set([
         "class",
@@ -633,11 +658,17 @@
         attributeNames: node.getAttributeNames().filter((value) => safeAttributes.has(value))
       });
       return {
-        adapterVersion: "0.1.0",
+        adapterVersion: "0.1.1",
         path: location.pathname,
         folderId: context?.folderId,
         expectedCount: context?.expectedCount,
         rowCandidateCount: rows.length,
+        parsedRowCount,
+        nameCandidateCount: allVisible(selectors.name).filter((node) => !node.closest(selectors.excluded)).length,
+        scrollContainer: (() => {
+          const node = this.scroller(rows[0]);
+          return { ...structure(node), clientHeight: node.clientHeight, scrollHeight: node.scrollHeight, scrollTop: node.scrollTop };
+        })(),
         visibleMenuStructure: allVisible(selectors.menu).map(structure),
         shareDialogPresent: !!this.modal(),
         rowStructure: rows.slice(0, 6).map((node) => ({
