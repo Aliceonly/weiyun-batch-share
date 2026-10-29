@@ -362,7 +362,7 @@ function hasExportableResult(item) {
   return item.status === "done" && result !== null && isShareUrl(result?.url) && result.url === oneLine(result.url) && isPassword(result.password) && result.passwordEnabled === true;
 }
 function exportTxt(task, _date = /* @__PURE__ */ new Date()) {
-  const lines = [...task.items].sort((a, b) => a.ordinal - b.ordinal).filter(hasExportableResult).map((item) => `${item.ordinal}.\u94FE\u63A5\uFF1A${item.result.url} \u5BC6\u7801\uFF1A${item.result.password}`);
+  const lines = [...task.items].sort((left, right) => left.ordinal - right.ordinal).filter(hasExportableResult).map((item) => `\u76EE\u5F55\uFF1A${oneLine(item.name)} \u94FE\u63A5\uFF1A${item.result.url} \u5BC6\u7801\uFF1A${item.result.password}`);
   return `\uFEFF${lines.length ? `${lines.join("\r\n")}\r
 ` : ""}`;
 }

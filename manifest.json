@@ -11,6 +11,10 @@
     "sidePanel",
     "downloads"
   ],
+  "host_permissions": [
+    "https://www.weiyun.com/*",
+    "https://weiyun.com/*"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"

@@ -46,16 +46,19 @@ function result(url, password = "abcd", verification = "same_dialog") {
   return { url, password, passwordEnabled: true, expiry: null, verification, verifiedAt: "2026-10-21T00:00:00.000Z" };
 }
 
-async function harness({ count = 1, protectFailures = {}, confirmFaults = {}, openFault = null, disconnectAutoExport = false } = {}) {
+async function harness({ count = 1, protectFailures = {}, confirmFaults = {}, openFault = null, disconnectAutoExport = false, unactivatedTab = false, origin = "https://www.weiyun.com", folderId = "test-folder" } = {}) {
   const values = {};
-  const downloads = [], calls = [], messages = [];
+  const downloads = [], calls = [], messages = [], injections = [];
   const opens = new Map();
   let backgroundListener, contentListener;
   let dialog = null, writeHook = null, commitHook = null, ackHook = null, contextHook = null;
   let failWrite = false, failClose = false;
   const shared = { URL, structuredClone, crypto: webcrypto, console, setTimeout, clearTimeout };
   const id = "test-extension", tabId = 1;
-  const tabUrl = "https://www.weiyun.com/disk/folder/test-folder";
+  const tabUrl = `${origin}/disk${folderId === "root" ? "" : `/folder/${folderId}`}`;
+  const session = { targetTabId: tabId };
+  const hasHostPermission = !unactivatedTab || (JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8")).host_permissions ?? []).includes(`${origin}/*`);
+  let contentAttached = !unactivatedTab;
   const dispatch = (listener, raw, sender) => new Promise((resolve, reject) => {
     try {
       const asynchronous = listener({ channel, ...raw }, sender, resolve);
@@ -80,17 +83,25 @@ async function harness({ count = 1, protectFailures = {}, confirmFaults = {}, op
           },
           async remove(key) { delete values[key]; },
         },
-        session: { async get() { return { targetTabId: tabId }; }, async set() {} },
+        session: { async get() { return clone(session); }, async set(entries) { Object.assign(session, clone(entries)); } },
       },
       tabs: {
-        async get() { return { id: tabId, url: tabUrl }; },
-        async query() { return [{ id: tabId, url: tabUrl }]; },
+        async get() { return { id: tabId, ...(hasHostPermission ? { url: tabUrl } : {}) }; },
+        async query() { return [{ id: tabId, ...(hasHostPermission ? { url: tabUrl } : {}) }]; },
         sendMessage: (_, raw) => {
+          if (!contentAttached) throw new Error("Could not establish connection. Receiving end does not exist.");
           messages.push(raw.action);
           if (raw.action === "CONTEXT" && contextHook) contextHook();
           return dispatch(contentListener, raw, { id });
         },
         onUpdated: noopEvent, onRemoved: noopEvent,
+      },
+      scripting: {
+        async executeScript(options) {
+          if (!hasHostPermission) throw new Error("Cannot access contents of the page. Extension manifest must request permission to access the respective host.");
+          injections.push(clone(options));
+          contentAttached = true;
+        },
       },
       action: { onClicked: noopEvent },
       downloads: {
@@ -121,7 +132,7 @@ async function harness({ count = 1, protectFailures = {}, confirmFaults = {}, op
   assert.equal(typeof FlowError, "function", "An unminified compiled content bundle is required");
   const fault = (code, urls = []) => new FlowError(`Simulated ${code}`, code, true, urls);
   const context = {
-    origin: "https://www.weiyun.com", folderId: "test-folder", folderUrl: tabUrl, folderName: "test-folder",
+    origin, folderId, folderUrl: tabUrl, folderName: folderId === "root" ? "全部文件" : folderId,
     account: "uin:12345678", documentNonce: state.adapter.documentNonce, expectedCount: count,
   };
   const snapshot = Array.from({ length: count }, (_, index) => ({
@@ -175,7 +186,7 @@ async function harness({ count = 1, protectFailures = {}, confirmFaults = {}, op
   const getTask = () => clone(values["task:test-task"]);
   const idle = async () => { await eventually(() => !state.runner?.isBusy, "Runner did not become idle"); await tick(); return getTask(); };
   return {
-    calls, downloads, messages, context, model, getTask, idle, opens,
+    calls, downloads, messages, injections, session, context, model, getTask, idle, opens,
     getLastError: () => state.lastError, getDialog: () => clone(dialog),
     setDialog(value) { dialog = clone(value); },
     setDocumentNonce(value) { context.documentNonce = value; state.adapter.documentNonce = value; },
@@ -212,6 +223,36 @@ async function harness({ count = 1, protectFailures = {}, confirmFaults = {}, op
 }
 const shareActions = (app) => app.calls.filter(([action]) => ["open", "protect", "confirm", "close"].includes(action));
 const countCalls = (app, action, name = "1") => app.calls.filter(([type, item]) => type === action && item === name).length;
+
+for (const origin of ["https://www.weiyun.com", "https://weiyun.com"]) {
+  test(`CONNECT reads a newly opened ${origin} root without a toolbar activation`, async () => {
+    const app = await harness({ unactivatedTab: true, origin, folderId: "root" });
+    await app.modify((task) => ({ ...task, status: "paused" }));
+    app.session.targetTabId = 99;
+    const saved = app.getTask();
+    const response = await app.panelRequest("CONNECT");
+    assert.equal(response.ok, true, response.error?.message);
+    assert.equal(response.data.context.folderUrl, `${origin}/disk`);
+    assert.equal(response.data.context.folderId, "root");
+    assert.equal(response.data.tabId, 1);
+    assert.equal(app.session.targetTabId, 1);
+    assert.deepEqual(app.injections, [{ target: { tabId: 1 }, files: ["content.js"], world: "ISOLATED" }]);
+    assert.equal((await app.panelRequest("CONNECT")).ok, true);
+    assert.equal((await app.panelRequest("BOOT")).ok, true);
+    assert.equal(app.injections.length, 1);
+    assert.deepEqual(app.getTask(), saved);
+    assert.deepEqual(shareActions(app), []);
+  });
+}
+
+test("CONNECT never receives host access or injects into unrelated websites", async () => {
+  const app = await harness({ unactivatedTab: true, origin: "https://example.com", folderId: "root" });
+  const response = await app.panelRequest("CONNECT");
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, "WRONG_PAGE");
+  assert.deepEqual(app.injections, []);
+  assert.deepEqual(shareActions(app), []);
+});
 
 test("normal automatic execution verifies same_dialog and downloads exactly result plus log", async () => {
   const app = await harness({ count: 3 });
@@ -541,11 +582,41 @@ test("uncertain imported candidates are automatically re-shared, never adopted a
   assert.equal(task.items[0].result.verification, "same_dialog"); assert(JSON.stringify(task.items[0]).includes("https://share.weiyun.com/legacy"));
   assert.equal(countCalls(app, "open"), 1); assert.equal(countCalls(app, "protect"), 1);
 });
-test("TXT is exact BOM/CRLF successful lines with original ordinals; details stay in the log", async () => {
+test("TXT keeps non-contiguous directory names when re-exporting saved results without sharing", async () => {
+  const app = await harness({ count: 2 });
+  await app.modify((task) => {
+    task.status = "completed";
+    Object.assign(task.items[0], { name: "16", status: "done", result: result("https://share.weiyun.com/folder16") });
+    Object.assign(task.items[1], { name: "18", status: "done", result: result("https://share.weiyun.com/folder18") });
+    task.items.reverse();
+    return task;
+  });
+  const savedItems = app.getTask().items;
+  const expected = "\uFEFF目录：16 链接：https://share.weiyun.com/folder16 密码：abcd\r\n目录：18 链接：https://share.weiyun.com/folder18 密码：abcd\r\n";
+  assert.equal(app.model.exportTxt(app.getTask()), expected);
+  assert.equal((await app.panelRequest("EXPORT")).ok, true);
+  assert.equal(decodeDownload(app.downloads[0]), expected);
+  assert.deepEqual(app.getTask().items, savedItems);
+  assert.deepEqual(shareActions(app), []);
+});
+test("TXT preserves leading zeroes, descriptive titles and non-numeric names", async () => {
+  const app = await harness({ count: 3 });
+  const task = app.getTask();
+  const names = ["0018", "18 - 原名 & <完整版>", "专题目录"];
+  for (const [index, item] of task.items.entries()) Object.assign(item, { name: names[index], status: "done", result: result(`https://share.weiyun.com/test${index + 1}`) });
+  assert.equal(app.model.exportTxt(task), "\uFEFF目录：0018 链接：https://share.weiyun.com/test1 密码：abcd\r\n目录：18 - 原名 & <完整版> 链接：https://share.weiyun.com/test2 密码：abcd\r\n目录：专题目录 链接：https://share.weiyun.com/test3 密码：abcd\r\n");
+});
+test("TXT normalizes control characters in directory names to keep one line per result", async () => {
+  const app = await harness();
+  const task = app.getTask();
+  Object.assign(task.items[0], { name: "18\r\n标题\t\u2028后续", status: "done", result: result("https://share.weiyun.com/test1") });
+  assert.equal(app.model.exportTxt(task), "\uFEFF目录：18  标题  后续 链接：https://share.weiyun.com/test1 密码：abcd\r\n");
+});
+test("TXT is exact BOM/CRLF successful lines with directory names; details stay in the log", async () => {
   const app = await harness({ count: 3, protectFailures: { "1": Infinity } });
   await app.modify((task) => { task.context.folderName = "private-folder<&>"; return task; });
   const task = await app.run();
-  const expected = "\uFEFF2.\u94fe\u63a5\uff1ahttps://share.weiyun.com/test2 \u5bc6\u7801\uff1aabcd\r\n3.\u94fe\u63a5\uff1ahttps://share.weiyun.com/test3 \u5bc6\u7801\uff1aabcd\r\n";
+  const expected = "\uFEFF目录：2 链接：https://share.weiyun.com/test2 密码：abcd\r\n目录：3 链接：https://share.weiyun.com/test3 密码：abcd\r\n";
   assert.equal(app.model.exportTxt(task), expected); assert.equal(app.downloads.length, 2);
   const contents = app.downloads.map(decodeDownload);
   assert.equal(contents.filter((text) => text === expected).length, 1);
@@ -560,7 +631,7 @@ test("TXT excludes failed, pending and legacy needs_review entries even with sav
   Object.assign(task.items[0], { status: "failed", observedUrl: "https://share.weiyun.com/failed", error: { message: "Failure" } });
   Object.assign(task.items[1], { status: "done", result: result("https://share.weiyun.com/only", "pass2") });
   Object.assign(task.items[2], { status: "needs_review", observedUrl: "https://share.weiyun.com/uncertain" });
-  assert.equal(app.model.exportTxt(task), "\uFEFF2.\u94fe\u63a5\uff1ahttps://share.weiyun.com/only \u5bc6\u7801\uff1apass2\r\n");
+  assert.equal(app.model.exportTxt(task), "\uFEFF目录：2 链接：https://share.weiyun.com/only 密码：pass2\r\n");
 });
 test("repeated/concurrent AUTO_EXPORT and BOOT do not duplicate the two downloads", async () => {
   const app = await harness(); await app.run(); assert.equal(app.downloads.length, 2);
@@ -573,7 +644,7 @@ test("finish ACK independently triggers both exports when the runner AUTO_EXPORT
   const task = await app.run(); assert.equal(task.status, "completed");
   await eventually(() => app.downloads.length === 2, "Background must export from its persisted finish, not require the disconnected runner");
   const contents = app.downloads.map(decodeDownload);
-  assert.equal(contents.filter((text) => text === "\uFEFF1.\u94fe\u63a5\uff1ahttps://share.weiyun.com/test1 \u5bc6\u7801\uff1aabcd\r\n").length, 1);
+  assert.equal(contents.filter((text) => text === "\uFEFF目录：1 链接：https://share.weiyun.com/test1 密码：abcd\r\n").length, 1);
   assert.equal(contents.filter((text) => text.includes(app.context.folderUrl)).length, 1);
   assert.equal((await app.command("BOOT")).ok, true); assert.equal(app.downloads.length, 2);
 });
@@ -608,11 +679,11 @@ test("manual partial TXT and log exports do not suppress either complete automat
     assert.equal((await app.panelRequest("EXPORT")).ok, true);
     assert.equal((await app.panelRequest("EXPORT_LOG")).ok, true);
     assert.equal(app.downloads.length, 2);
-    assert.equal(decodeDownload(app.downloads[0]), "\uFEFF1.\u94fe\u63a5\uff1ahttps://share.weiyun.com/test1 \u5bc6\u7801\uff1aabcd\r\n");
+    assert.equal(decodeDownload(app.downloads[0]), "\uFEFF目录：1 链接：https://share.weiyun.com/test1 密码：abcd\r\n");
   } finally { release.resolve(); }
   assert.equal((await app.idle()).status, "completed");
   assert.equal(app.downloads.length, 4);
-  const expected = "\uFEFF1.\u94fe\u63a5\uff1ahttps://share.weiyun.com/test1 \u5bc6\u7801\uff1aabcd\r\n2.\u94fe\u63a5\uff1ahttps://share.weiyun.com/test2 \u5bc6\u7801\uff1aabcd\r\n3.\u94fe\u63a5\uff1ahttps://share.weiyun.com/test3 \u5bc6\u7801\uff1aabcd\r\n";
+  const expected = "\uFEFF目录：1 链接：https://share.weiyun.com/test1 密码：abcd\r\n目录：2 链接：https://share.weiyun.com/test2 密码：abcd\r\n目录：3 链接：https://share.weiyun.com/test3 密码：abcd\r\n";
   assert.equal(decodeDownload(app.downloads[2]), expected);
   const log = decodeDownload(app.downloads[3]);
   assert(log.includes(app.context.folderUrl)); assert(log.includes("https://share.weiyun.com/test3"));

@@ -22,7 +22,7 @@
 
 ## 使用与恢复
 
-面板顶部的“打开微云主目录”会在当前浏览器的新标签页打开微云网页版主目录，沿用该 browser profile 的登录状态，不改变已有任务的目标 tab；尚未登录时按微云页面提示登录即可。
+面板顶部的“打开微云主目录”会在当前浏览器的新标签页打开微云网页版主目录，沿用该 browser profile 的登录状态，不改变已有任务的目标 tab；尚未登录时按微云页面提示登录即可。页面加载完成后，点击面板的“重新读取”即可连接这个新标签页，无需关闭再打开面板。
 
 1. 打开目标微云目录，等待总项数显示，点击工具栏插件图标打开 Side Panel。
 2. 确认目录和数量；新任务点击“全部分享并导出 TXT”，已有任务选择继续。
@@ -42,10 +42,13 @@
 **结果 TXT** 使用 UTF-8 BOM、Windows CRLF，只输出成功项，每项一行，格式如下（示例为虚构值）：
 
 ```text
-1.链接：https://share.weiyun.com/EXAMPLE 密码：abcd
+目录：16 链接：https://share.weiyun.com/EXAMPLE16 密码：abcd
+目录：18 链接：https://share.weiyun.com/EXAMPLE18 密码：abcd
 ```
 
-没有标题、名称、有效期、状态说明或未完成占位。编号使用原快照 `ordinal`，不重新连续编号：第 2 项失败时，成功项可为 `1.`、`3.`。零成功时不写占位内容。
+不额外添加递增编号、汇总标题、有效期、状态说明或未完成占位。“目录”使用各项目已保存的原始名称，`16`、`18` 不会变成 `16`、`17`，前导零和非数字名称也保留。仍按原快照顺序输出，名称中的换行与控制字符替换为空格，确保每项一行。零成功时不写占位内容。
+
+已有任务可直接点击“导出 TXT”生成新格式，不必重新分享；已下载的旧 TXT 不会自动改写。
 
 **日志 TXT** 单独记录统计、任务/项目状态、失败原因、尝试与重试、历史 URL 及验证边界。日志中的旧链接可能仍有效，列出它们不代表已撤销或已受密码保护。结果 TXT 不夹带日志。
 
@@ -55,8 +58,8 @@
 
 ## 权限与隐私
 
-- 发布权限仅为 `activeTab`、`scripting`、`storage`、`sidePanel`、`downloads`，无持久全站 host permissions，不申请 cookie、clipboard、debugger 或 nativeMessaging 权限。
-- 点击工具栏图标为当前 tab 授予 `activeTab`；仅从浏览器菜单打开面板不一定有访问权限。
+- 发布 API 权限为 `activeTab`、`scripting`、`storage`、`sidePanel`、`downloads`；持久 host permissions 仅限 `https://www.weiyun.com/*` 和 `https://weiyun.com/*`，用于读取微云标签页地址并按需注入页面脚本，不申请其他网站、cookie、clipboard、debugger 或 nativeMessaging 权限。
+- “重新读取”可直接连接当前微云标签页，包括从面板入口新开的主目录页；不再依赖对该 tab 单独点击工具栏来授予 `activeTab`。升级后须在扩展管理页重新加载，并允许浏览器提示的微云网站访问权限。
 - 任务保存在本机 `chrome.storage.local`，不使用 `storage.sync` 或第三方后端；分享操作仍通过微云网页与微云服务通信。
 - 结果和 JSON 含链接、密码，日志也含敏感分享信息。本地 storage 和导出文件不是加密保险箱；删除本地任务不撤销云盘分享。
 - 页面诊断仅输出 allowlist 内的结构信息，不输出文件名、分享 URL、密码、cookie 或 token。数量不完整或无法唯一定位项目时停止，可导出诊断定位问题。
