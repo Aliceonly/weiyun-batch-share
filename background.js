@@ -155,6 +155,9 @@ function resetItem(item, now) {
   else delete item.restartRequired;
   item.updatedAt = now;
 }
+function snapshotIdentity(item) {
+  return JSON.stringify(item.siteId ? [item.kind, "site", item.siteId] : [item.kind, "snapshot", item.key, item.name, item.fingerprint]);
+}
 function applyEvent(original, runId, event) {
   if (original.runId !== runId) throw new FlowError("\u65E7\u6267\u884C\u5668\u5DF2\u5931\u6548\uFF0C\u7981\u6B62\u7EE7\u7EED\u64CD\u4F5C\u3002", "STALE_RUN");
   const task = structuredClone(original);
@@ -181,9 +184,17 @@ function applyEvent(original, runId, event) {
           throw new FlowError(`\u5BFC\u5165\u8BB0\u5F55\u201C${candidate.name}\u201D\u65E0\u6CD5\u552F\u4E00\u5339\u914D\u5F53\u524D\u76EE\u5F55\u3002`, "IMPORT_MISMATCH");
         }
       }
+      const reusable = new Map();
+      for (const saved of task.reusableItems ?? []) {
+        if (!hasExportableResult(saved)) continue;
+        const identity = snapshotIdentity(saved);
+        if (reusable.has(identity)) throw new FlowError("历史项目身份重复，无法安全复用结果。请检查目录或选择全部重新分享。", "AMBIGUOUS_ITEMS");
+        reusable.set(identity, saved);
+      }
+      const reused = new Set();
       task.items = naturalSort(event.items).map((item, index) => {
         const imported = task.importedCandidates.find((candidate) => candidate.name === item.name);
-        return {
+        const metadata = {
           key: item.key,
           name: item.name,
           kind: item.kind,
@@ -191,7 +202,17 @@ function applyEvent(original, runId, event) {
           fingerprint: item.fingerprint,
           scrollHint: item.scrollHint,
           pageHint: item.pageHint,
-          ordinal: index + 1,
+          ordinal: index + 1
+        };
+        const identity = snapshotIdentity(item);
+        const saved = reusable.get(identity);
+        if (saved) {
+          if (reused.has(identity)) throw new FlowError("当前目录有多个项目匹配同一份历史结果，已停止分享。", "AMBIGUOUS_ITEMS");
+          reused.add(identity);
+          return { ...saved, ...metadata };
+        }
+        return {
+          ...metadata,
           status: "pending",
           attempts: 0,
           observedUrl: null,
@@ -209,10 +230,13 @@ function applyEvent(original, runId, event) {
         };
       });
       task.expectedCount = event.expected;
+      task.context.expectedCount = event.expected;
       task.foundCount = event.expected;
       task.snapshotAt = now;
       task.status = task.pauseRequested ? "pausing" : "running";
-      task.message = `\u6E05\u5355\u5DF2\u8BFB\u53D6\uFF0C\u5171 ${event.expected} \u9879\u3002`;
+      task.reusedCount = reused.size;
+      delete task.reusableItems;
+      task.message = `清单共 ${event.expected} 项，保留 ${reused.size} 项已完成结果，待分享 ${event.expected - reused.size} 项。`;
       break;
     }
     case "phase": {
@@ -394,6 +418,10 @@ function exportLog(task, date = /* @__PURE__ */ new Date()) {
   add("\u8303\u56F4", "\u5F53\u524D\u76EE\u5F55\u7684\u76F4\u63A5\u9879\u76EE\uFF0C\u6BCF\u9879\u72EC\u7ACB\u5206\u4EAB");
   add("\u4EFB\u52A1 ID", task.id);
   add("\u6267\u884C ID", task.runId);
+  if (task.reuseSourceTaskId) {
+    add("结果复用来源任务", task.reuseSourceTaskId);
+    add("复用已完成结果数", task.reusedCount ?? 0);
+  }
   add("\u4EFB\u52A1\u72B6\u6001", task.status);
   add("\u662F\u5426\u5B8C\u6574", complete ? "\u662F\uFF08\u5168\u90E8\u5B8C\u6210\uFF09" : "\u5426\uFF08\u672A\u5B8C\u6210 / \u90E8\u5206\u7ED3\u679C\uFF09");
   add("\u6E05\u5355\u9879\u76EE\u6570", task.expectedCount ?? "\u672A\u786E\u8BA4");
@@ -800,16 +828,36 @@ async function panelCommand(raw) {
     for (const task3 of tasks.filter((entry) => isActive(entry))) {
       const status = await page(task3.tabId, "STATUS").catch(() => null);
       if (status?.busy) {
-        if (existing?.id === task3.id) return { task: task3, existing: true };
+        if (existing?.id === task3.id && raw.newTask !== true && raw.reuseCompleted !== true) return { task: task3, existing: true };
         throw new FlowError("\u5DF2\u6709\u76EE\u5F55\u4EFB\u52A1\u6B63\u5728\u6267\u884C\uFF0C\u8BF7\u5148\u6682\u505C\u3002", "RUNNER_BUSY");
       }
     }
-    if (existing && raw.newTask !== true && raw.action !== "IMPORT") return { task: existing, existing: true };
+    if (existing && raw.newTask !== true && raw.reuseCompleted !== true && raw.action !== "IMPORT") return { task: existing, existing: true };
     if (existing && !["completed", "finished_with_errors", "error"].includes(existing.status)) {
       if (raw.action === "IMPORT") throw new FlowError("\u8BE5\u76EE\u5F55\u5DF2\u6709\u672A\u5B8C\u6210\u4EFB\u52A1\uFF0C\u8BF7\u5148\u6062\u590D\u6216\u5BFC\u51FA\u5E76\u5220\u9664\u65E7\u4EFB\u52A1\uFF0C\u518D\u5BFC\u5165\u3002", "EXISTING_TASK");
-      if (raw.newTask === true) throw new FlowError("\u8BE5\u76EE\u5F55\u6709\u672A\u5B8C\u6210\u4EFB\u52A1\uFF0C\u8BF7\u5148\u7EE7\u7EED\u539F\u4EFB\u52A1\u3002", "EXISTING_TASK");
+      if (isActive(existing)) throw new FlowError("请先暂停当前任务并等待保存完成，再补齐新增项目或全部重新分享。", "RUNNER_BUSY");
     }
+    if (existing && raw.newTask === true) await ensureIdle(existing);
+    let source = null;
+    if (raw.action === "START" && raw.reuseCompleted === true) {
+      source = await getTask(raw.taskId);
+      await ensureIdle(source);
+      if (isActive(source)) throw new FlowError("请先暂停原任务并等待保存完成。", "RUNNER_BUSY");
+      assertContext(source.context, context);
+      if (source.context.account === null && source.context.documentNonce !== context.documentNonce && raw.acknowledged !== true) {
+        throw new FlowError("页面已刷新，无法自动确认原账号。请确认当前仍登录原任务的微云账号后再复用已完成结果。", "ACCOUNT_RECONFIRM_REQUIRED");
+      }
+    }
+    const latestContext = await page(tabId, "CONTEXT");
+    assertContext(context, latestContext);
+    if (latestContext.documentNonce !== context.documentNonce) throw new FlowError("建立任务期间页面已刷新，请重新读取后再试。", "STALE_DOCUMENT");
+    if (source && (await getTask(source.id)).revision !== source.revision) throw new FlowError("原任务状态已更新，请重新读取后再试。", "REVISION_CONFLICT");
     const task2 = createTask(context, tabId, crypto.randomUUID(), crypto.randomUUID());
+    if (source) {
+      task2.reuseSourceTaskId = source.id;
+      task2.reusableItems = source.items.filter(hasExportableResult).map((item) => structuredClone(item));
+      task2.message = "正在重新扫描当前目录，匹配已完成结果；仅分享新增和未完成项目。";
+    }
     if (raw.action === "IMPORT") {
       if (typeof raw.contents !== "string") throw new FlowError("\u672A\u8BFB\u53D6\u5230\u8FDB\u5EA6\u6587\u4EF6\u3002", "INVALID_IMPORT");
       task2.importedCandidates = parseImport(raw.contents, context);

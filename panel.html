@@ -30,13 +30,21 @@
         <div class="section-label"><span>分享进度</span><span id="status" class="status-tag">就绪</span></div>
         <div class="metrics">
           <div><strong id="count-done">0</strong><span>已完成</span></div>
-          <div><strong id="count-total">—</strong><span>目录项目</span></div>
+          <div><strong id="count-total">—</strong><span>任务快照项目</span></div>
           <div><strong id="count-issues">0</strong><span>待恢复 / 失败</span></div>
         </div>
         <progress id="progress" max="100" value="0" aria-label="分享完成进度"></progress>
         <p id="task-message" class="task-message">完整读取清单后，自动逐项添加密码并保存结果。</p>
+        <p id="directory-change" class="notice" role="status" hidden></p>
 
         <button id="start" type="button" class="primary" disabled><span>全部分享并导出 TXT</span><span aria-hidden="true">↗</span></button>
+        <div id="refresh-controls" hidden>
+          <div class="button-row">
+            <button id="add-items" type="button" class="secondary">补齐新增项目</button>
+            <button id="new-task" type="button" class="secondary">全部重新分享</button>
+          </div>
+          <p class="hint">补齐会重新扫描目录，保留已完成结果，只分享新增和未完成项。两种操作均保留原任务，可在历史进度中查看。</p>
+        </div>
         <div class="button-row" id="run-controls" hidden>
           <button id="pause" type="button" class="secondary">暂停</button>
           <button id="resume" type="button" class="secondary">继续任务</button>
@@ -65,7 +73,6 @@
         </div>
         <input type="file" id="import-file" accept=".json,application/json" hidden>
         <p class="hint">导入记录先匹配目录，未验证记录会重新分享；旧链接仅保留在日志中，不会自动撤销。</p>
-        <button id="new-task" type="button" class="text-button" hidden>为此目录重新建立分享任务</button>
         <button id="delete" type="button" class="text-button danger" hidden>删除选中的本地进度</button>
         <p class="hint">删除本地进度不会取消微云分享。请先导出需要保留的记录。</p>
       </details>

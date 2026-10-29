@@ -141,7 +141,11 @@ async function harness({ count = 1, protectFailures = {}, confirmFaults = {}, op
   }));
   Object.assign(state.adapter, {
     context: () => clone(context), checkPage() {},
-    async enumerate() { return { items: clone(snapshot), expected: count }; },
+    async enumerate(progress, shouldPause) {
+      await progress(snapshot.length, context.expectedCount);
+      if (await shouldPause()) throw fault("PAUSE_SCAN");
+      return { items: clone(snapshot), expected: context.expectedCount };
+    },
     readShare() {
       if (!dialog) throw fault("DIALOG_MISSING");
       calls.push(["read", dialog.name]); return clone(dialog);
@@ -183,10 +187,12 @@ async function harness({ count = 1, protectFailures = {}, confirmFaults = {}, op
   let task = model.createTask(context, tabId, "test-task", "initial-run");
   task = model.applyEvent(task, task.runId, { type: "scan_done", expected: count, items: snapshot });
   await model.store.saveNew(task);
-  const getTask = () => clone(values["task:test-task"]);
-  const idle = async () => { await eventually(() => !state.runner?.isBusy, "Runner did not become idle"); await tick(); return getTask(); };
+  const getTask = (taskId = "test-task") => clone(values[`task:${taskId}`]);
+  const idle = async (taskId = "test-task") => { await eventually(() => !state.runner?.isBusy, "Runner did not become idle"); await tick(); return getTask(taskId); };
   return {
     calls, downloads, messages, injections, session, context, model, getTask, idle, opens,
+    allTasks: () => clone(Object.values(values)),
+    setSnapshot(items, expected = items.length) { snapshot.splice(0, snapshot.length, ...clone(items)); context.expectedCount = expected; },
     getLastError: () => state.lastError, getDialog: () => clone(dialog),
     setDialog(value) { dialog = clone(value); },
     setDocumentNonce(value) { context.documentNonce = value; state.adapter.documentNonce = value; },
@@ -223,6 +229,220 @@ async function harness({ count = 1, protectFailures = {}, confirmFaults = {}, op
 }
 const shareActions = (app) => app.calls.filter(([action]) => ["open", "protect", "confirm", "close"].includes(action));
 const countCalls = (app, action, name = "1") => app.calls.filter(([type, item]) => type === action && item === name).length;
+
+async function startFreshTask(app, reuseCompleted = true, fields = {}) {
+  const response = await app.panelRequest("START", { newTask: true, reuseCompleted, ...fields });
+  assert.equal(response.ok, true, response.error?.message);
+  return app.idle(response.data.task.id);
+}
+
+test("adding item 73 preserves all 72 results and only shares the new item", async () => {
+  const app = await harness({ count: 72 });
+  const saved = await app.run();
+  app.setSnapshot([...saved.items, { key: "item-73", name: "73", kind: "folder", siteId: "folder:73", fingerprint: "fingerprint-73", pageHint: 1, scrollHint: 0 }]);
+  const task = await startFreshTask(app);
+  assert.equal(task.status, "completed");
+  assert.equal(task.expectedCount, 73);
+  assert.equal(task.context.expectedCount, 73);
+  assert.equal(task.reusedCount, 72);
+  assert.equal(task.reuseSourceTaskId, saved.id);
+  assert.equal(task.reusableItems, undefined);
+  assert.deepEqual(task.items.slice(0, 72).map((item) => item.result), saved.items.map((item) => item.result));
+  assert.equal(app.calls.filter(([action]) => action === "open").length, 73);
+  assert.equal(countCalls(app, "open", "73"), 1);
+  assert.deepEqual(app.getTask(), saved);
+  assert.equal(app.allTasks().length, 2);
+  assert.equal(decodeDownload(app.downloads[2]).split("\r\n").length, 74);
+  assert.match(decodeDownload(app.downloads[2]), /目录：73 链接：https:\/\/share.weiyun.com\/test73/);
+});
+
+test("refreshing an unchanged directory reuses all results without another share", async () => {
+  const app = await harness({ count: 2 });
+  const saved = await app.run();
+  app.setSnapshot(saved.items);
+  const task = await startFreshTask(app);
+  assert.equal(task.status, "completed");
+  assert.equal(task.reusedCount, 2);
+  assert.equal(app.calls.filter(([action]) => action === "open").length, 2);
+  assert.deepEqual(app.getTask(), saved);
+});
+
+test("refresh uses stable IDs across renames but never reuses a same-name replacement", async () => {
+  const app = await harness({ count: 3 });
+  const saved = await app.run();
+  app.setSnapshot([
+    { ...saved.items[0], name: "renamed", fingerprint: "renamed-fingerprint" },
+    { ...saved.items[1], key: "replacement", siteId: "folder:replacement", fingerprint: "replacement-fingerprint" }
+  ]);
+  const task = await startFreshTask(app);
+  assert.equal(task.status, "completed");
+  assert.equal(task.items.length, 2);
+  assert.equal(task.reusedCount, 1);
+  assert.deepEqual(task.items.find((item) => item.name === "renamed").result, saved.items[0].result);
+  assert.notEqual(task.items.find((item) => item.key === "replacement").result.url, saved.items[1].result.url);
+  assert.equal(countCalls(app, "open", "3"), 1);
+  assert.deepEqual(app.getTask(), saved);
+});
+
+for (const changed of [false, true]) {
+  test(`refresh without a stable ID ${changed ? "does not reuse changed metadata" : "matches an identical fingerprint"}`, async () => {
+    const app = await harness();
+    await app.run();
+    await app.modify((task) => { task.items[0].siteId = null; return task; });
+    const saved = app.getTask();
+    app.setSnapshot([{ ...saved.items[0], fingerprint: changed ? "changed" : saved.items[0].fingerprint }]);
+    const task = await startFreshTask(app);
+    assert.equal(task.status, "completed");
+    assert.equal(task.reusedCount, changed ? 0 : 1);
+    assert.equal(countCalls(app, "open"), changed ? 2 : 1);
+  });
+}
+
+test("an incomplete refresh preserves history and its saved candidates survive resume", async () => {
+  const app = await harness({ count: 2 });
+  const saved = await app.run();
+  app.setSnapshot(saved.items, 3);
+  const stopped = await startFreshTask(app);
+  assert.equal(stopped.error.code, "PERSISTENCE_FAILED");
+  assert.match(stopped.error.message, /目录数量未通过校验/);
+  assert.equal(stopped.reusableItems.length, 2);
+  assert.deepEqual(app.getTask(), saved);
+  assert.equal(app.calls.filter(([action]) => action === "open").length, 2);
+  app.setSnapshot(saved.items);
+  const response = await app.panelRequest("RESUME", { taskId: stopped.id });
+  assert.equal(response.ok, true, response.error?.message);
+  const resumed = await app.idle(stopped.id);
+  assert.equal(resumed.status, "completed");
+  assert.equal(resumed.reusedCount, 2);
+  assert.equal(app.calls.filter(([action]) => action === "open").length, 2);
+});
+
+test("full restart scans all 73 current items without reusing the saved 72 results", async () => {
+  const app = await harness({ count: 72 });
+  const saved = await app.run();
+  app.setSnapshot([...saved.items, { key: "item-73", name: "73", kind: "folder", siteId: "folder:73", fingerprint: "fingerprint-73" }]);
+  const task = await startFreshTask(app, false);
+  assert.equal(task.status, "completed");
+  assert.equal(task.items.length, 73);
+  assert.equal(task.reusedCount, 0);
+  assert.equal(app.calls.filter(([action]) => action === "open").length, 145);
+  assert.equal(countCalls(app, "open", "73"), 1);
+  assert.deepEqual(app.getTask(), saved);
+});
+
+test("a paused incomplete task can be replaced by a full restart without deleting history", async () => {
+  const app = await harness();
+  await app.seedLegacy();
+  const saved = await app.modify((task) => ({ ...task, status: "paused" }));
+  const task = await startFreshTask(app, false);
+  assert.equal(task.status, "completed");
+  assert.equal(task.reusedCount, 0);
+  assert.deepEqual(app.getTask(), saved);
+});
+
+for (const reuseCompleted of [true, false]) {
+  test(`an active runner rejects ${reuseCompleted ? "incremental refresh" : "full restart"} without a second task`, async () => {
+    const app = await harness();
+    const entered = deferred(), release = deferred();
+    let reached = false;
+    app.onCommit(async (event) => {
+      if (event.type === "phase" && event.status === "opening_share") {
+        reached = true;
+        entered.resolve();
+        await release.promise;
+      }
+    });
+    await app.start();
+    try {
+      await eventually(() => reached, "Missing opening checkpoint");
+      await entered.promise;
+      const actions = clone(shareActions(app));
+      const response = await app.panelRequest("START", { newTask: true, reuseCompleted });
+      assert.equal(response.error?.code, "RUNNER_BUSY");
+      assert.equal(app.allTasks().length, 1);
+      assert.deepEqual(shareActions(app), actions);
+    } finally { release.resolve(); }
+    assert.equal((await app.idle()).status, "completed");
+    assert.equal(countCalls(app, "open"), 1);
+  });
+}
+
+test("refresh preserves successful results while retrying failed and newly added items", async () => {
+  const protectFailures = { "2": Infinity };
+  const app = await harness({ count: 2, protectFailures });
+  const saved = await app.run();
+  assert.equal(saved.status, "finished_with_errors");
+  protectFailures["2"] = 0;
+  app.setSnapshot([...saved.items, { key: "item-3", name: "3", kind: "folder", siteId: "folder:3", fingerprint: "fingerprint-3" }]);
+  const task = await startFreshTask(app);
+  assert.equal(task.status, "completed");
+  assert.equal(task.reusedCount, 1);
+  assert.deepEqual(task.items[0].result, saved.items[0].result);
+  assert.equal(countCalls(app, "open", "1"), 1);
+  assert.equal(countCalls(app, "open", "2"), 4);
+  assert.equal(countCalls(app, "open", "3"), 1);
+  assert.deepEqual(app.getTask(), saved);
+});
+
+test("refresh refuses another account and never creates a replacement task", async () => {
+  const app = await harness();
+  const saved = await app.run();
+  app.context.account = "uin:87654321";
+  const response = await app.panelRequest("START", { newTask: true, reuseCompleted: true });
+  assert.equal(response.error?.code, "ACCOUNT_CHANGED");
+  assert.equal(app.allTasks().length, 1);
+  assert.deepEqual(app.getTask(), saved);
+  assert.equal(countCalls(app, "open"), 1);
+});
+
+test("refreshing unknown-account results after navigation requires acknowledgement", async () => {
+  const app = await harness();
+  await app.run();
+  await app.modify((task) => { task.context.account = null; return task; });
+  app.context.account = null;
+  app.setDocumentNonce("new-document");
+  const response = await app.panelRequest("START", { newTask: true, reuseCompleted: true });
+  assert.equal(response.error?.code, "ACCOUNT_RECONFIRM_REQUIRED");
+  assert.equal(app.allTasks().length, 1);
+  const task = await startFreshTask(app, true, { acknowledged: true });
+  assert.equal(task.status, "completed");
+  assert.equal(task.reusedCount, 1);
+  assert.equal(countCalls(app, "open"), 1);
+});
+
+test("refresh refuses a concurrently revised source before starting a new runner", async () => {
+  const app = await harness();
+  await app.run();
+  let reads = 0;
+  app.onContext(() => { if (++reads === 2) app.bumpRevision(); });
+  const response = await app.panelRequest("START", { newTask: true, reuseCompleted: true });
+  assert.equal(response.error?.code, "REVISION_CONFLICT");
+  assert.equal(app.allTasks().length, 1);
+  assert.equal(countCalls(app, "open"), 1);
+});
+
+test("refresh persistence failure cannot share or overwrite the original task", async () => {
+  const app = await harness();
+  const saved = await app.run();
+  app.failNextWrite();
+  const response = await app.panelRequest("START", { newTask: true, reuseCompleted: true });
+  assert.equal(response.error?.code, "PERSISTENCE_FAILED");
+  assert.equal(app.allTasks().length, 1);
+  assert.deepEqual(app.getTask(), saved);
+  assert.equal(countCalls(app, "open"), 1);
+});
+
+test("one historical result cannot be copied to two current items", async () => {
+  const app = await harness();
+  const saved = await app.run();
+  app.setSnapshot([saved.items[0], { ...saved.items[0], key: "another-key" }]);
+  const task = await startFreshTask(app);
+  assert.equal(task.error.code, "PERSISTENCE_FAILED");
+  assert.match(task.error.message, /同一份历史结果/);
+  assert.equal(task.items.length, 0);
+  assert.equal(countCalls(app, "open"), 1);
+  assert.deepEqual(app.getTask(), saved);
+});
 
 for (const origin of ["https://www.weiyun.com", "https://weiyun.com"]) {
   test(`CONNECT reads a newly opened ${origin} root without a toolbar activation`, async () => {
@@ -697,11 +917,17 @@ test("EXPORT_LOG downloads only a detailed log, not another simple TXT", async (
   assert.notEqual(log, app.model.exportTxt(app.getTask())); assert(log.includes(app.context.folderUrl));
 });
 
-async function panelHarness({ account = "uin:12345678", oldDocument = false, finishedWithErrors = false } = {}) {
+async function panelHarness({ account = "uin:12345678", oldDocument = false, finishedWithErrors = false, completedCount = null, liveCount = null, taskStatus = null } = {}) {
   const app = await harness(); const task = await app.seedLegacy(); task.context.account = account;
   if (finishedWithErrors) { task.status = "finished_with_errors"; task.items[0].status = "failed"; task.items[0].attempts = 3; }
+  if (completedCount !== null) {
+    task.items = Array.from({ length: completedCount }, (_, index) => ({ ...task.items[0], key: `item-${index + 1}`, ordinal: index + 1, name: String(index + 1), status: "done", result: result(`https://share.weiyun.com/test${index + 1}`) }));
+    task.expectedCount = completedCount;
+    task.status = "completed";
+  }
+  if (taskStatus) task.status = taskStatus;
   if (oldDocument) task.context.documentNonce = "previous-document";
-  const context = { ...app.context, account };
+  const context = { ...app.context, account, expectedCount: liveCount ?? task.expectedCount };
   const nodes = new Map(), requests = [], confirmations = [];
   let answer = true, changed;
   const node = () => ({
@@ -718,10 +944,11 @@ async function panelHarness({ account = "uin:12345678", oldDocument = false, fin
       runtime: { async sendMessage(raw) {
         requests.push(clone(raw));
         if (raw.action === "BOOT") return { ok: true, data: { context, tabId: 1, tasks: [task] } };
-        if (raw.action === "RESUME" && !task.context.account && task.context.documentNonce !== context.documentNonce) {
+        if ((raw.action === "RESUME" || raw.action === "START" && raw.reuseCompleted) && !task.context.account && task.context.documentNonce !== context.documentNonce) {
           if (raw.acknowledged !== true) return { ok: false, error: { code: "ACCOUNT_RECONFIRM_REQUIRED", message: "Confirm original account", uncertain: false, relatedUrls: [] } };
           task.context = clone(context);
         }
+        if (raw.action === "START") return { ok: true, data: { task: { ...task, id: "new-task", context: clone(context), status: "scanning", items: [], snapshotAt: null, expectedCount: context.expectedCount }, existing: false } };
         return { ok: true, data: { ...task, context: clone(context), status: "paused" } };
       } },
       storage: { onChanged: { addListener(listener) { changed = listener; } } },
@@ -731,6 +958,51 @@ async function panelHarness({ account = "uin:12345678", oldDocument = false, fin
   await eventually(() => vm.runInContext("!busy && !!connection", panel));
   return { nodes, requests, confirmations, panel, html, changed: (...args) => changed(...args), answer(value) { answer = value; } };
 }
+test("completed 72-item panel surfaces both refresh choices and the live 73-item count", async () => {
+  const app = await panelHarness({ completedCount: 72, liveCount: 73 });
+  assert.equal(app.nodes.get("refresh-controls").hidden, false);
+  assert.equal(app.nodes.get("add-items").disabled, false);
+  assert.equal(app.nodes.get("new-task").disabled, false);
+  assert.equal(app.nodes.get("directory-change").hidden, false);
+  assert.match(app.nodes.get("directory-change").textContent, /当前目录 73 项，原任务快照 72 项/);
+  assert(app.html.indexOf('id="new-task"') < app.html.indexOf('<details class="utilities">'));
+  app.nodes.get("add-items").click();
+  await eventually(() => app.requests.some((request) => request.action === "START"));
+  const request = app.requests.find((entry) => entry.action === "START");
+  assert.equal(request.reuseCompleted, true);
+  assert.equal(request.newTask, true);
+  assert.equal(request.taskId, "test-task");
+  assert.equal(app.confirmations.length, 0);
+});
+test("full restart requires confirmation and does not request result reuse", async () => {
+  const app = await panelHarness({ completedCount: 72, liveCount: 73 });
+  app.answer(false);
+  app.nodes.get("new-task").click();
+  await eventually(() => !vm.runInContext("busy", app.panel));
+  assert.equal(app.requests.some((request) => request.action === "START"), false);
+  app.answer(true);
+  app.nodes.get("new-task").click();
+  await eventually(() => app.requests.some((request) => request.action === "START"));
+  assert.equal(app.requests.find((entry) => entry.action === "START").reuseCompleted, false);
+});
+test("refresh choices remain available without a count change and are disabled during a run", async () => {
+  const completed = await panelHarness({ completedCount: 72, liveCount: 72 });
+  assert.equal(completed.nodes.get("directory-change").hidden, true);
+  assert.equal(completed.nodes.get("add-items").disabled, false);
+  const active = await panelHarness({ taskStatus: "running" });
+  assert.equal(active.nodes.get("add-items").disabled, true);
+  assert.equal(active.nodes.get("new-task").disabled, true);
+});
+test("refresh confirmation cannot reuse unknown-account results after cancellation", async () => {
+  const app = await panelHarness({ completedCount: 72, liveCount: 73, account: null, oldDocument: true });
+  app.answer(false);
+  app.nodes.get("add-items").click();
+  await eventually(() => app.confirmations.length === 1 && !vm.runInContext("busy", app.panel));
+  assert.equal(app.requests.some((request) => request.acknowledged), false);
+  app.answer(true);
+  app.nodes.get("add-items").click();
+  await eventually(() => app.requests.some((request) => request.action === "START" && request.acknowledged === true));
+});
 test("panel removes share-review forms, enables legacy RESUME and exposes export-log", async () => {
   const app = await panelHarness();
   for (const id of ["review", "review-ack", "review-current", "review-saved", "review-password", "review-url", "review-links", "reconcile"]) assert.equal(app.nodes.has(id), false, id);

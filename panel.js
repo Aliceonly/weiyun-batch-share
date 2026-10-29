@@ -123,6 +123,9 @@ function render() {
   const counts = current ? taskCounts(current) : { done: 0, failed: 0, review: 0, pending: 0 };
   element("count-done").textContent = String(counts.done);
   element("count-total").textContent = String(current?.expectedCount ?? connection?.context.expectedCount ?? "\u2014");
+  const directoryChanged = !!current?.snapshotAt && connection?.context.expectedCount != null && current.expectedCount !== connection.context.expectedCount;
+  element("directory-change").hidden = !directoryChanged;
+  element("directory-change").textContent = directoryChanged ? `当前目录 ${connection.context.expectedCount} 项，原任务快照 ${current.expectedCount} 项。点击“补齐新增项目”可重新扫描并保留已完成结果，或选择“全部重新分享”。` : "";
   element("count-issues").textContent = String(counts.failed + counts.review);
   const status = element("status");
   status.textContent = current ? labels[current.status] : "\u5C31\u7EEA";
@@ -143,8 +146,9 @@ function render() {
   element("connect").disabled = busy;
   element("import").disabled = busy || active;
   element("diagnose").disabled = busy || !connection || active;
-  element("new-task").hidden = !current || !["completed", "finished_with_errors", "error"].includes(current.status);
-  element("new-task").disabled = busy;
+  element("refresh-controls").hidden = !current;
+  element("add-items").disabled = busy || !current || !connection || active;
+  element("new-task").disabled = busy || !current || !connection || active;
   element("delete").hidden = !current;
   element("delete").disabled = busy || active;
   const downloadLabels = {
@@ -202,8 +206,17 @@ async function connect(action = "CONNECT") {
   connection = await rpc(action);
   setCurrent(connection.tasks[0] ?? null);
 }
-async function start(newTask = false) {
-  const response = await rpc("START", { newTask });
+async function start(newTask = false, reuseCompleted = false) {
+  if (newTask && !reuseCompleted && !confirm("将重新扫描当前目录并重新分享全部项目。原任务会保留为历史记录，但旧链接或密码可能变化。确定继续？")) return;
+  const fields = { newTask, reuseCompleted, taskId: current?.id };
+  let response;
+  try {
+    response = await rpc("START", fields);
+  } catch (error) {
+    if (asFlowError(error).code !== "ACCOUNT_RECONFIRM_REQUIRED") throw error;
+    if (!confirm("无法自动识别原账号。请确认当前仍登录原任务的微云账号；确认后将复用已完成结果，仅分享新增和未完成项目。")) return;
+    response = await rpc("START", { ...fields, acknowledged: true });
+  }
   setCurrent(response.task);
   if (response.existing) notice("\u5DF2\u8BFB\u53D6\u6B64\u76EE\u5F55\u7684\u73B0\u6709\u4EFB\u52A1\uFF0C\u53EF\u7EE7\u7EED\u4EFB\u52A1\u6216\u5BFC\u51FA\u7ED3\u679C\u3002");
 }
@@ -225,6 +238,7 @@ function on(id, operation) {
 }
 on("connect", () => connect());
 on("start", () => start());
+on("add-items", () => start(true, true));
 on("new-task", () => start(true));
 on("pause", async () => {
   setCurrent(await rpc("PAUSE", { taskId: current?.id }));
